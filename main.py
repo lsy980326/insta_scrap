@@ -63,36 +63,23 @@ def main() -> None:
         # 스크래퍼 인스턴스 생성
         scraper = InstagramReelsScraper(config=config)
 
-        # 로그인 정보가 있으면 자동 로그인
+        # 로그인 정보가 있으면 자동 로그인 및 릴스 탭 이동
         if config.instagram_username and config.instagram_password:
             logger.info("로그인 정보가 설정되어 있습니다. 로그인을 시도합니다...")
             scraper.login()
-            logger.info("로그인 성공!")
-
-        # 해시태그나 URL이 설정되어 있으면 스크래핑 시작
-        if config.hashtag:
-            logger.info(f"해시태그로 스크래핑 시작: {config.hashtag}")
-            reels = scraper.scrape_reels(hashtag=config.hashtag, max_reels=config.max_reels)
-            if reels:
-                scraper.save_to_json(reels)
-                logger.info(f"{len(reels)}개의 릴스를 수집했습니다.")
-        elif config.target_url:
-            logger.info(f"URL로 스크래핑 시작: {config.target_url}")
-            reels = scraper.scrape_reels(url=config.target_url)
-            if reels:
-                scraper.save_to_json(reels)
-                logger.info(f"{len(reels)}개의 릴스를 수집했습니다.")
-        else:
-            logger.info("스크래퍼가 준비되었습니다.")
-            logger.info(".env 파일에서 HASHTAG 또는 TARGET_URL을 설정하세요.")
+            logger.info("로그인 성공! 릴스 탭까지 이동 완료.")
 
     except Exception as e:
         logger.error(f"오류 발생: {e}")
         raise
-    finally:
-        # 브라우저 종료
-        if scraper.browser_manager:
-            scraper.browser_manager.close()
+    # finally:
+    #     # 브라우저 종료 (주석 처리 - 브라우저가 자동으로 닫히지 않도록)
+    #     if scraper.browser_manager:
+    #         scraper.browser_manager.close()
+    
+    # 브라우저를 열어둔 채로 종료 (수동으로 닫을 수 있도록)
+    logger.info("프로그램이 종료되었습니다. 브라우저는 열려 있습니다.")
+    logger.info("브라우저를 닫으려면 Ctrl+C를 누르거나 브라우저를 직접 닫으세요.")
 
 
 if __name__ == "__main__":
