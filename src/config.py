@@ -17,6 +17,10 @@ class ScrapingConfig(BaseSettings):
     instagram_username: Optional[str] = Field(default=None, description="인스타그램 사용자명")
     instagram_password: Optional[str] = Field(default=None, description="인스타그램 비밀번호")
 
+    # 숏트렌드 로그인 정보
+    shortrend_email: Optional[str] = Field(default=None, description="숏트렌드 이메일")
+    shortrend_password: Optional[str] = Field(default=None, description="숏트렌드 비밀번호")
+
     # 스크래핑 설정
     hashtag: Optional[str] = Field(default=None, description="해시태그 (예: #fitness)")
     target_url: Optional[str] = Field(default=None, description="특정 릴스 URL")
