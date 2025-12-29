@@ -16,6 +16,9 @@ python-dotenv = "^1.0.0"
 loguru = "^0.7.2"
 pydantic = "^2.5.0"
 pydantic-settings = "^2.1.0"
+mitmproxy = "^10.1.0"
+frida-tools = "^12.3.0"
+objection = "^1.11.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
