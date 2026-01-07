@@ -16,14 +16,16 @@ from .utils.logger import get_logger
 class BrowserManager:
     """Playwright 브라우저 관리 클래스"""
 
-    def __init__(self, config: ScrapingConfig) -> None:
+    def __init__(self, config: ScrapingConfig, user_agent: Optional[str] = None) -> None:
         """
         초기화
 
         Args:
             config: 스크래핑 설정 객체
+            user_agent: User-Agent 문자열 (None이면 기본값 사용)
         """
         self.config = config
+        self.saved_user_agent = user_agent  # 세션에서 로드한 User-Agent
         self.logger = get_logger(self.__class__.__name__)
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
@@ -104,12 +106,8 @@ class BrowserManager:
             # 브라우저 실행
             self.browser = browser_type.launch(**launch_options)
 
-            # 실제 사용자처럼 보이게 하는 User-Agent (최신 Chrome)
-            user_agent = (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            )
+            # User-Agent 우선순위: 세션에서 로드한 User-Agent > 기본 User-Agent
+            user_agent = self.saved_user_agent or self._get_default_user_agent()
 
             # 프록시 설정
             proxy_config = None
@@ -342,6 +340,84 @@ class BrowserManager:
         if self.page is None:
             raise InstagramScraperError("브라우저가 시작되지 않았습니다. start()를 먼저 호출하세요.")
         return self.page
+
+    def _get_default_user_agent(self) -> str:
+        """
+        기본 User-Agent 반환
+
+        Returns:
+            User-Agent 문자열
+        """
+        return (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        )
+
+    def get_user_agent(self) -> str:
+        """
+        현재 컨텍스트의 User-Agent 반환
+
+        Returns:
+            User-Agent 문자열
+        """
+        if self.context and self.page:
+            try:
+                return self.page.evaluate("navigator.userAgent")
+            except Exception:
+                pass
+        return self.saved_user_agent or self._get_default_user_agent()
+
+    def set_cookies(self, cookies: list) -> None:
+        """
+        브라우저 컨텍스트에 쿠키 설정
+
+        Args:
+            cookies: Playwright 쿠키 형식의 리스트
+
+        Raises:
+            InstagramScraperError: 브라우저가 시작되지 않은 경우
+        """
+        if self.context is None:
+            raise InstagramScraperError("브라우저가 시작되지 않았습니다. start()를 먼저 호출하세요.")
+
+        try:
+            # 도메인 설정이 필요한 쿠키 처리
+            processed_cookies = []
+            for cookie in cookies:
+                # 쿠키 복사
+                processed_cookie = cookie.copy()
+                # 도메인이 없으면 기본 도메인 설정
+                if "domain" not in processed_cookie or not processed_cookie["domain"]:
+                    processed_cookie["domain"] = ".instagram.com"
+                processed_cookies.append(processed_cookie)
+
+            self.context.add_cookies(processed_cookies)
+            self.logger.info(f"✅ 쿠키 설정 완료: {len(processed_cookies)}개")
+        except Exception as e:
+            self.logger.error(f"쿠키 설정 실패: {e}")
+            raise InstagramScraperError(f"쿠키 설정에 실패했습니다: {e}") from e
+
+    def get_cookies(self) -> list:
+        """
+        현재 컨텍스트의 쿠키 추출
+
+        Returns:
+            Playwright 쿠키 형식의 리스트
+
+        Raises:
+            InstagramScraperError: 브라우저가 시작되지 않은 경우
+        """
+        if self.context is None:
+            raise InstagramScraperError("브라우저가 시작되지 않았습니다. start()를 먼저 호출하세요.")
+
+        try:
+            cookies = self.context.cookies()
+            self.logger.info(f"✅ 쿠키 추출 완료: {len(cookies)}개")
+            return cookies
+        except Exception as e:
+            self.logger.error(f"쿠키 추출 실패: {e}")
+            raise InstagramScraperError(f"쿠키 추출에 실패했습니다: {e}") from e
 
     def __enter__(self) -> "BrowserManager":
         """컨텍스트 매니저 진입"""

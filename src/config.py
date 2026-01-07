@@ -77,6 +77,14 @@ class ScrapingConfig(BaseSettings):
     db_pool_size: int = Field(default=5, ge=1, description="데이터베이스 연결 풀 크기")
     db_max_overflow: int = Field(default=10, ge=0, description="데이터베이스 최대 오버플로우")
 
+    # 세션 관리 설정
+    session_storage_type: str = Field(
+        default="db", description="세션 저장 타입 ('db' 또는 'file')"
+    )
+    session_file_dir: Path = Field(
+        default=Path("sessions"), description="세션 파일 저장 디렉토리 (file 타입일 때)"
+    )
+
     @field_validator("log_file", mode="before")
     @classmethod
     def validate_log_file(cls, v: any) -> Optional[Path]:  # noqa: ANN001
@@ -113,6 +121,27 @@ class ScrapingConfig(BaseSettings):
         if v.upper() not in valid_levels:
             raise ValueError(f"log_level은 {valid_levels} 중 하나여야 합니다.")
         return v.upper()
+
+    @field_validator("session_storage_type")
+    @classmethod
+    def validate_session_storage_type(cls, v: str) -> str:
+        """세션 저장 타입 검증"""
+        if v.lower() not in ["db", "file"]:
+            raise ValueError("session_storage_type은 'db' 또는 'file'이어야 합니다.")
+        return v.lower()
+
+    @field_validator("session_file_dir", mode="before")
+    @classmethod
+    def validate_session_file_dir(cls, v: any) -> Path:  # noqa: ANN001
+        """session_file_dir 빈 문자열 처리"""
+        if v == "" or v is None:
+            return Path("sessions")
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return Path("sessions")
+            return Path(v)
+        return v
 
 
 def load_config() -> ScrapingConfig:

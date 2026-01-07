@@ -6,7 +6,7 @@ SQLAlchemy를 사용한 테이블 모델 정의
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
+from sqlalchemy import BigInteger, Boolean, Column, ForeignKey, Integer, JSON, String, Text, TIMESTAMP
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -106,4 +106,21 @@ class ScrapingSession(Base):
 
     def __repr__(self) -> str:
         return f"<ScrapingSession(type='{self.session_type}', status='{self.status}')>"
+
+
+class AccountSession(Base):
+    """인스타그램 계정 세션 정보 테이블 (쿠키 및 User-Agent 저장)"""
+
+    __tablename__ = "account_sessions"
+
+    account_id = Column(String(255), primary_key=True, nullable=False, index=True)  # Instagram username
+    cookies = Column(JSON, nullable=False)  # Playwright 쿠키 형식
+    user_agent = Column(Text, nullable=False)  # User-Agent 문자열
+    is_valid = Column(Boolean, default=True, nullable=False, index=True)
+    last_verified_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, default=func.current_timestamp(), nullable=False)
+    updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<AccountSession(account_id='{self.account_id}', is_valid={self.is_valid})>"
 

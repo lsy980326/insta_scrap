@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import ScrapingConfig
 from ..utils.logger import get_logger
+from .models import Base
 
 logger = get_logger(__name__)
 
@@ -74,6 +75,10 @@ def init_db(config: ScrapingConfig) -> bool:
         # 연결 테스트
         with _engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+
+        # 모든 테이블 자동 생성 (없으면 생성, 있으면 스킵)
+        Base.metadata.create_all(bind=_engine)
+        logger.info("데이터베이스 테이블 확인/생성 완료")
 
         logger.info("데이터베이스 연결 초기화 완료")
         return True
