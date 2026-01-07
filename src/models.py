@@ -20,6 +20,7 @@ class ReelData(BaseModel):
     title: Optional[str] = Field(default=None, description="제목")
     music: Optional[str] = Field(default=None, description="배경음악 정보")
     link: Optional[HttpUrl] = Field(default=None, description="게시물 링크")
+    posted_date: Optional[str] = Field(default=None, description="게시일자 (ISO 형식 또는 타임스탬프)")
 
     @field_validator("author")
     @classmethod

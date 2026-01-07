@@ -4,9 +4,11 @@
 """
 
 import re
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 
 from ...models import ReelData
 from ...utils.logger import get_logger
@@ -95,6 +97,18 @@ class ReelRepository:
         # 기존 릴스 조회
         existing_reel = self.find_by_reel_id(reel_id)
 
+        # 게시일 파싱 (posted_date가 있으면 created_at, updated_at으로 사용)
+        posted_datetime = None
+        if reel_data.posted_date:
+            try:
+                # ISO 형식 문자열을 datetime으로 변환
+                if isinstance(reel_data.posted_date, str):
+                    posted_datetime = datetime.fromisoformat(reel_data.posted_date.replace("Z", "+00:00"))
+                elif isinstance(reel_data.posted_date, datetime):
+                    posted_datetime = reel_data.posted_date
+            except Exception as e:
+                logger.debug(f"게시일 파싱 실패: {e}")
+
         if existing_reel:
             # 기존 릴스 업데이트
             logger.debug(f"기존 릴스 업데이트: {reel_id}")
@@ -109,12 +123,16 @@ class ReelRepository:
                 existing_reel.title = reel_data.title
             if reel_data.music:
                 existing_reel.music = reel_data.music
+            # 게시일이 있으면 updated_at 업데이트 (created_at은 유지)
+            if posted_datetime:
+                existing_reel.updated_at = posted_datetime
 
             self.session.flush()
             return existing_reel, False
         else:
             # 새 릴스 생성
             logger.debug(f"새 릴스 생성: {reel_id}")
+            # 게시일이 있으면 created_at, updated_at 모두 게시일로 설정
             new_reel = Reel(
                 reel_id=reel_id,
                 link=str(reel_data.link),
@@ -123,6 +141,8 @@ class ReelRepository:
                 creator_profile_image=reel_data.creator_profile_image,
                 title=reel_data.title,
                 music=reel_data.music,
+                created_at=posted_datetime if posted_datetime else func.current_timestamp(),
+                updated_at=posted_datetime if posted_datetime else func.current_timestamp(),
             )
             self.session.add(new_reel)
             self.session.flush()

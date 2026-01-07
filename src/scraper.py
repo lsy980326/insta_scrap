@@ -1,6 +1,7 @@
 import json
 import re
 import time
+import html
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +19,7 @@ from .exceptions import (
 from .models import ReelData
 from .utils.human_behavior import random_delay, random_mouse_movement, simulate_page_interaction
 from .utils.logger import get_logger
+from .utils.session_manager import SessionManager
 from .utils.wait_utils import safe_fill_input, wait_for_element, wait_for_page_load
 
 # 데이터베이스 관련 import (선택적)
@@ -41,6 +43,9 @@ class InstagramReelsScraper:
     - 배경음악 정보
     - 링크
     """
+    
+    # 클래스 레벨 글로벌 캐시: 모든 릴스 데이터를 저장 (Key: shortcode)
+    _reels_cache: dict[str, dict] = {}
 
     def __init__(
         self,
@@ -61,6 +66,8 @@ class InstagramReelsScraper:
         self.password = password or self.config.instagram_password
         self.browser_manager: Optional[BrowserManager] = None
         self.logger = get_logger(self.__class__.__name__)
+        self.session_manager = SessionManager(self.config)
+        self._network_listener_registered = False  # 네트워크 리스너 등록 여부
 
         # 출력 디렉토리 생성
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -84,7 +91,14 @@ class InstagramReelsScraper:
 
     def login(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
         """
-        인스타그램에 로그인
+        인스타그램에 로그인 (세션 관리 포함)
+
+        세션 관리 플로우:
+        1. 저장된 세션(쿠키 + User-Agent) 로드 시도
+        2. 세션이 있으면 브라우저에 설정하고 검증
+        3. 세션이 유효하면 로그인 완료
+        4. 세션이 없거나 무효하면 전체 로그인 진행
+        5. 로그인 성공 후 세션 저장
 
         Args:
             username: 인스타그램 사용자명 (None이면 기존 값 사용)
@@ -102,8 +116,56 @@ class InstagramReelsScraper:
         if not username or not password:
             raise LoginError("사용자명과 비밀번호가 필요합니다.")
 
+        account_id = username
+
         try:
-            self.logger.info(f"로그인 시도: {username}")
+            self.logger.info(f"로그인 시도: {account_id}")
+
+            # 1단계: 저장된 세션 로드 시도
+            session_data = self.session_manager.load_session(account_id)
+
+            if session_data:
+                cookies = session_data.get("cookies")
+                user_agent = session_data.get("user_agent")
+
+                if cookies and user_agent:
+                    self.logger.info("✅ 저장된 세션 발견, 세션 검증 시도 중...")
+
+                    # 2단계: User-Agent와 함께 브라우저 시작
+                    if self.browser_manager is None:
+                        self.browser_manager = BrowserManager(self.config, user_agent=user_agent)
+                        self.browser_manager.start()
+
+                    # 3단계: 쿠키 설정
+                    try:
+                        self.browser_manager.set_cookies(cookies)
+                    except Exception as e:
+                        self.logger.warning(f"쿠키 설정 실패, 전체 로그인 진행: {e}")
+                        session_data = None  # 세션 사용 불가, 전체 로그인 진행
+
+                    # 4단계: 세션 검증
+                    if session_data:
+                        page = self.browser_manager.get_page()
+                        if self.session_manager.verify_session(page, account_id=account_id):
+                            self.logger.info("✅ 저장된 세션으로 로그인 성공")
+                            self.username = username
+                            self.password = password
+                            
+                            # 세션으로 로그인 성공 시 릴스 탭으로 이동
+                            try:
+                                self.logger.info("릴스 탭으로 이동 시도 중...")
+                                self.navigate_to_reels_tab()
+                                self.logger.info("릴스 탭 이동 완료")
+                            except Exception as e:
+                                self.logger.warning(f"릴스 탭 이동 실패: {e}")
+                            
+                            return True
+                        else:
+                            self.logger.warning("⚠️ 저장된 세션이 만료됨, 전체 로그인 진행")
+
+            # 5단계: 전체 로그인 (세션 없음 또는 검증 실패)
+            if not session_data or not session_data.get("cookies") or not session_data.get("user_agent"):
+                self.logger.info("전체 로그인 프로세스 시작...")
 
             # 브라우저 시작 (아직 시작되지 않은 경우)
             if self.browser_manager is None:
@@ -295,9 +357,6 @@ class InstagramReelsScraper:
             self.logger.info("로그인 처리 대기 중... (20초, 브라우저 조작 없음)")
             time.sleep(20)  # Python의 time.sleep 사용 (브라우저 응답을 기다리지 않음)
 
-            # 로그인 후 팝업 처리 (먼저 팝업 처리)
-            self._handle_post_login_popup(page)
-
             # 로그인 결과 확인 및 리다이렉트 감지
             try:
                 # 페이지가 완전히 로드될 때까지 대기
@@ -350,6 +409,9 @@ class InstagramReelsScraper:
             except Exception as e:
                 self.logger.warning(f"홈 탭 이동 실패 (계속 진행): {e}")
 
+            # 홈 탭 이동 후 팝업 처리
+            self._handle_post_login_popup(page)
+
             # 릴스 탭으로 이동 (수집은 main.py에서 별도로 호출)
             try:
                 self.logger.info("릴스 탭으로 이동 시도 중...")
@@ -360,6 +422,22 @@ class InstagramReelsScraper:
 
             self.username = username
             self.password = password
+
+            # 6단계: 로그인 성공 후 세션 저장
+            try:
+                if self.browser_manager and self.browser_manager.context:
+                    session_data = self.session_manager.extract_session_data(
+                        self.browser_manager.context
+                    )
+                    self.session_manager.save_session(
+                        account_id=account_id,
+                        cookies=session_data["cookies"],
+                        user_agent=session_data["user_agent"],
+                    )
+                    self.logger.info("✅ 세션 저장 완료")
+            except Exception as e:
+                self.logger.warning(f"세션 저장 실패 (작업은 계속 진행): {e}")
+
             self.logger.info("로그인 프로세스 완료")
             return True
         except Exception as e:
@@ -727,6 +805,18 @@ class InstagramReelsScraper:
 
             # 추가 안정화 대기
             time.sleep(2)
+            # 일부 환경에서 페이지가 확대된 것처럼 보이면서(줌/레이아웃) 액션바가 화면 밖으로 밀리는 경우가 있음.
+            # - 브라우저 줌을 리셋(Meta+0) 시도
+            # - DOM zoom을 낮춰(80%) 액션바가 화면 안으로 들어오게 유도
+            try:
+                page.keyboard.press("Meta+0")
+            except Exception:
+                pass
+            try:
+                page.evaluate('document.documentElement.style.zoom = "80%";')
+                self.logger.info('페이지 줌 보정 적용: document zoom=80%')
+            except Exception:
+                pass
             self.logger.info("릴스 페이지 로딩 완료")
         except Exception as e:
             self.logger.warning(f"릴스 페이지 로딩 대기 중 오류 (계속 진행): {e}")
@@ -910,11 +1000,13 @@ class InstagramReelsScraper:
                 thumbnail=None,
                 likes=None,
                 comments=None,
+                views=None,
                 author=None,
                 creator_profile_image=None,
                 title=None,
                 music=None,
                 link=None,
+                posted_date=None,
             )
 
             # 현재 릴스를 대표하는 컨테이너 결정
@@ -925,19 +1017,34 @@ class InstagramReelsScraper:
                 current_video = self._get_current_reel_video(page)
                 if current_video:
                     try:
-                        # 좋아요 버튼이 함께 들어있는 카드 컨테이너를 우선 시도
+                        # reels.txt 구조처럼 video와 액션바(좋아요/댓글)는 같은 카드 상위 div에 공존하므로
+                        # video+좋아요+댓글을 동시에 포함하는 가장 가까운 ancestor div를 우선 선택한다.
                         container = current_video.locator(
-                            'xpath=ancestor::div[.//svg[@aria-label="좋아요"]][1]'
+                            'xpath=ancestor::div['
+                            './/video'
+                            ' and '
+                            './/svg[contains(@aria-label,"좋아요") or contains(@aria-label,"Like") or contains(@aria-label,"Unlike")]'
+                            ' and '
+                            './/svg[contains(@aria-label,"댓글") or contains(@aria-label,"Comment")]'
+                            '][1]'
                         )
                         if container.count() > 0:
                             root = container.first
-                            self.logger.info("현재 릴스 컨테이너를 video+좋아요 버튼 기준으로 선택")
+                            self.logger.info("현재 릴스 컨테이너를 video+좋아요+댓글 기준으로 선택")
                         else:
-                            # fallback: video의 가장 가까운 상위 div 하나라도 사용
-                            fallback = current_video.locator("xpath=ancestor::div[1]")
-                            if fallback.count() > 0:
-                                root = fallback.first
-                                self.logger.info("현재 릴스 컨테이너를 video 상위 div 기준으로 선택")
+                            # 2순위: 카드 컨테이너 클래스(x1qjc9v5) 기반
+                            card = current_video.locator(
+                                'xpath=ancestor::div[contains(@class,"x1qjc9v5")][1]'
+                            )
+                            if card.count() > 0:
+                                root = card.first
+                                self.logger.info("현재 릴스 컨테이너를 카드(x1qjc9v5) 기준으로 선택")
+                            else:
+                                # fallback: video의 가장 가까운 상위 div 하나라도 사용
+                                fallback = current_video.locator("xpath=ancestor::div[1]")
+                                if fallback.count() > 0:
+                                    root = fallback.first
+                                    self.logger.info("현재 릴스 컨테이너를 video 상위 div 기준으로 선택")
                     except Exception as e:
                         self.logger.debug(f"video 기반 컨테이너 결정 실패: {e}")
                 else:
@@ -957,266 +1064,314 @@ class InstagramReelsScraper:
             except Exception as e:
                 self.logger.debug(f"현재 릴스 컨테이너 결정 중 예외 (페이지 전체 사용): {e}")
 
-            # 좋아요 수 추출 - reels.txt에서 확인한 규칙 기반
+            # 좋아요/댓글 수 추출 (reels.txt 구조 기준)
+            # - 같은 카드 내부의 role=button 블록에서 카운트(span.x1vvkbs)를 읽는다.
+            # - 지금 로그처럼 "버튼을 찾지 못함"이 계속 뜨는 이유는 stats_root에 액션바가 포함되지 않아서임.
+            #   그래서 stats_root를 더 큰 컨테이너로 잡고, 필요하면 상위로 확장하며 찾는다.
+            stats_root = root
             try:
-                # 방법 1: 좋아요 버튼 찾고 같은 컨테이너 내의 span.html-span.x1vvkbs 찾기
-                like_button_selectors = [
-                    'svg[aria-label="좋아요"]',
-                    'button[aria-label*="좋아요"]',
-                    'svg[aria-label*="Like"]',
-                ]
-                
-                for selector in like_button_selectors:
+                if current_video:
+                    card = current_video.locator(
+                        'xpath=ancestor::div[contains(@class,"x1qjc9v5")][1]'
+                    )
+                    if card.count() > 0:
+                        stats_root = card.first
+            except Exception:
+                stats_root = root
+
+            def _find_button_scope_with_fallback(scope, xpath_expr: str, label: str):
+                """scope에서 버튼을 못 찾으면 상위 div로 확장하며 최대 5번 재시도."""
+                current_scope = scope
+                for attempt in range(5):
+                    btn = current_scope.locator(xpath_expr).first
                     try:
-                        like_button = root.locator(selector).first
-                        if like_button.is_visible(timeout=500):
-                            # 좋아요 버튼의 조상 요소에서 span.html-span.x1vvkbs 찾기
-                            # 좋아요 버튼과 같은 html-div 컨테이너 내의 형제 요소 찾기
-                            parent_div = like_button.locator('xpath=ancestor::div[contains(@class, "html-div")][position()<=3]')
-                            for i in range(min(3, parent_div.count())):
-                                try:
-                                    container = parent_div.nth(i)
-                                    # span.html-span.x1vvkbs 클래스를 가진 요소 찾기
-                                    number_spans = container.locator('span.html-span.x1vvkbs').all()
-                                    for span in number_spans[:3]:
-                                        try:
-                                            text = span.text_content() or ""
-                                            text = text.strip()
-                                            # 숫자 형식 처리 (예: "17.4만", "4346", "1,234")
-                                            if re.match(r'^[\d.,만천억]+$', text.replace(' ', '')):
-                                                likes_value = None
-
-                                                # "만" 단위 처리
-                                                if "만" in text:
-                                                    num_match = re.search(r'([\d.]+)', text)
-                                                    if num_match:
-                                                        num_val = float(num_match.group(1))
-                                                        likes_value = int(num_val * 10000)
-
-                                                # "천" 단위 처리
-                                                elif "천" in text:
-                                                    num_match = re.search(r'([\d.]+)', text)
-                                                    if num_match:
-                                                        num_val = float(num_match.group(1))
-                                                        likes_value = int(num_val * 1000)
-
-                                                # 단순 숫자 (콤마/점 포함)
-                                                else:
-                                                    likes_str = text.replace(",", "").replace(".", "")
-                                                    if likes_str.isdigit():
-                                                        likes_value = int(likes_str)
-
-                                                if likes_value and likes_value > 0:
-                                                    reel_data.likes = likes_value
-                                                    self.logger.info(f"좋아요 수: {reel_data.likes}")
-                                                    break
-                                        except Exception:
-                                            continue
-                                    if reel_data.likes:
-                                        break
-                                except Exception:
-                                    continue
-                            if reel_data.likes:
-                                break
-                    except Exception:
-                        continue
-
-                # 방법 2 (백업): 화면 전체에서 현재 비디오와 세로 위치가 가장 가까운 "좋아요" 아이콘 기준으로 수집
-                if not reel_data.likes and current_video:
-                    try:
-                        like_icons = page.locator(
-                            'svg[aria-label="좋아요"], svg[aria-label*="Like"]'
-                        )
-                        icon_count = like_icons.count()
-                        if icon_count:
-                            # 현재 비디오의 세로 중앙 위치
-                            video_rect = current_video.evaluate(
-                                "el => { const r = el.getBoundingClientRect(); "
-                                "return { top: r.top, height: r.height }; }"
-                            )
-                            video_center_y = video_rect["top"] + video_rect["height"] / 2
-
-                            closest_idx = None
-                            closest_dist = float("inf")
-
-                            for i in range(min(10, icon_count)):
-                                try:
-                                    icon = like_icons.nth(i)
-                                    rect = icon.evaluate(
-                                        "el => { const r = el.getBoundingClientRect(); "
-                                        "return { top: r.top, height: r.height }; }"
-                                    )
-                                    center_y = rect["top"] + rect["height"] / 2
-                                    dist = abs(center_y - video_center_y)
-                                    if dist < closest_dist:
-                                        closest_dist = dist
-                                        closest_idx = i
-                                except Exception:
-                                    continue
-
-                            if closest_idx is not None:
-                                like_button = like_icons.nth(closest_idx)
-                                parent_div = like_button.locator(
-                                    'xpath=ancestor::div[contains(@class, "html-div")][1]'
-                                )
-                                if parent_div.count() > 0:
-                                    container = parent_div.first
-                                    number_spans = container.locator(
-                                        'span.html-span.x1vvkbs'
-                                    ).all()
-                                    for span in number_spans[:3]:
-                                        try:
-                                            text = (span.text_content() or "").strip()
-                                            if re.match(
-                                                r'^[\d.,만천억]+$', text.replace(" ", "")
-                                            ):
-                                                likes_value = None
-                                                if "만" in text:
-                                                    m = re.search(r"([\d.]+)", text)
-                                                    if m:
-                                                        likes_value = int(
-                                                            float(m.group(1)) * 10000
-                                                        )
-                                                elif "천" in text:
-                                                    m = re.search(r"([\d.]+)", text)
-                                                    if m:
-                                                        likes_value = int(
-                                                            float(m.group(1)) * 1000
-                                                        )
-                                                else:
-                                                    likes_str = (
-                                                        text.replace(",", "")
-                                                        .replace(".", "")
-                                                        .strip()
-                                                    )
-                                                    if likes_str.isdigit():
-                                                        likes_value = int(likes_str)
-
-                                                if likes_value is not None:
-                                                    reel_data.likes = likes_value
-                                                    self.logger.info(
-                                                        f"좋아요 수(백업): {reel_data.likes}"
-                                                    )
-                                                    break
-                                        except Exception:
-                                            continue
+                        if btn.is_visible(timeout=300):
+                            return btn, attempt
                     except Exception:
                         pass
+                    # 상위로 확장
+                    parent = current_scope.locator("xpath=ancestor::div[1]")
+                    if parent.count() == 0:
+                        break
+                    current_scope = parent.first
+                self.logger.info(f"{label}: 버튼을 찾지 못함 (scope_expand_attempts=5)")
+                return None, 5
 
-            except Exception as e:
-                self.logger.debug(f"좋아요 수 추출 실패: {e}")
+            def _parse_like_count(text: str) -> Optional[int]:
+                t = (text or "").strip().replace(" ", "")
+                if not t:
+                    return None
+                if not re.match(r"^[\d.,만천억]+$", t):
+                    return None
+                try:
+                    if "만" in t:
+                        m = re.search(r"([\d.]+)", t)
+                        return int(float(m.group(1)) * 10000) if m else None
+                    if "천" in t:
+                        m = re.search(r"([\d.]+)", t)
+                        return int(float(m.group(1)) * 1000) if m else None
+                    digits = t.replace(",", "").replace(".", "")
+                    return int(digits) if digits.isdigit() else None
+                except Exception:
+                    return None
 
-            # 댓글 수 추출 - reels.txt에서 확인한 규칙 기반
-            try:
-                # 방법 1: 댓글 버튼 찾고 같은 컨테이너 내의 span.html-span.x1vvkbs 찾기
-                comment_button_selectors = [
-                    'svg[aria-label="댓글"]',
-                    'button[aria-label*="댓글"]',
-                    'svg[aria-label*="Comment"]',
-                ]
-                
-                for selector in comment_button_selectors:
-                    try:
-                        comment_button = root.locator(selector).first
-                        if comment_button.is_visible(timeout=500):
-                            # 댓글 버튼의 조상 요소에서 span.html-span.x1vvkbs 찾기
-                            parent_div = comment_button.locator('xpath=ancestor::div[contains(@class, "html-div")][position()<=3]')
-                            for i in range(min(3, parent_div.count())):
-                                try:
-                                    container = parent_div.nth(i)
-                                    # span.html-span.x1vvkbs 클래스를 가진 요소 찾기
-                                    number_spans = container.locator('span.html-span.x1vvkbs').all()
-                                    for span in number_spans[:3]:
-                                        try:
-                                            text = span.text_content() or ""
-                                            text = text.strip()
-                                            # 숫자 형식 처리 (댓글은 보통 숫자만)
-                                            if re.match(r'^[\d,]+$', text.replace(' ', '')):
-                                                comments_str = text.replace(',', '').replace('.', '')
-                                                if comments_str.isdigit():
-                                                    comments_value = int(comments_str)
-                                                    if comments_value >= 0:
-                                                        reel_data.comments = comments_value
-                                                        self.logger.info(f"댓글 수: {reel_data.comments}")
-                                                        break
-                                        except Exception:
-                                            continue
-                                    if reel_data.comments is not None:
-                                        break
-                                except Exception:
-                                    continue
-                            if reel_data.comments is not None:
-                                break
-                    except Exception:
+            def _extract_count_from_button(button, kind: str) -> tuple[Optional[int], int, int]:
+                spans = button.locator("span.html-span.x1vvkbs, span.x1vvkbs").all()
+                if not spans:
+                    spans = button.locator("span").all()
+
+                total = len(spans)
+                scanned = 0
+                for span in spans[:80]:
+                    scanned += 1
+                    txt = (span.text_content() or "").strip()
+                    if not txt:
                         continue
+                    if kind == "likes":
+                        v = _parse_like_count(txt)
+                        if v is not None and v >= 0:
+                            return v, scanned, total
+                    else:
+                        t2 = txt.replace(" ", "")
+                        if re.match(r"^[\d,]+$", t2):
+                            digits = t2.replace(",", "").replace(".", "").strip()
+                            if digits.isdigit():
+                                return int(digits), scanned, total
+                return None, scanned, total
 
-                # 방법 2 (백업): 현재 비디오 기준으로 세로 위치가 가장 가까운 "댓글" 아이콘 사용
-                if reel_data.comments is None and current_video:
+            def _find_action_button_by_proximity(
+                button_xpath: str, label: str, svg_xpath: Optional[str] = None
+            ):
+                """
+                reels 페이지에서 액션바(좋아요/댓글)가 video 카드 밖(오른쪽 컬럼)에 렌더링되는 레이아웃이 있음.
+                그 경우 카드 내부 탐색은 실패하므로, 현재 video의 위치를 기준으로 '오른쪽에 가장 가까운' 아이콘을 찾는다.
+                """
+                if not current_video:
+                    return None
+                try:
+                    vrect = current_video.evaluate(
+                        "el => { const r = el.getBoundingClientRect(); "
+                        "return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; }"
+                    )
+                    vcy = vrect["top"] + vrect["height"] / 2
+
+                    # 1) role=button/button 자체의 aria-label 기준
+                    candidates = page.locator(button_xpath)
+                    cnt = candidates.count()
+                    # 디버그: svg 총 개수도 같이 남김 (화면/레イ아웃 확인용)
                     try:
-                        comment_icons = page.locator(
-                            'svg[aria-label="댓글"], svg[aria-label*="Comment"]'
-                        )
-                        icon_count = comment_icons.count()
-                        if icon_count:
-                            video_rect = current_video.evaluate(
+                        total_svgs = page.locator("svg").count()
+                    except Exception:
+                        total_svgs = -1
+                    self.logger.info(f"{label}: candidate_buttons={cnt}, total_svgs={total_svgs}")
+
+                    # 2) 버튼 aria-label이 없으면 svg(title/aria-label)로 찾고, ancestor button으로 변환
+                    svg_candidates = None
+                    svg_cnt = 0
+                    if cnt == 0 and svg_xpath:
+                        svg_candidates = page.locator(svg_xpath)
+                        svg_cnt = svg_candidates.count()
+                        self.logger.info(f"{label}: candidate_svgs={svg_cnt} (svg_xpath fallback)")
+
+                    best_idx = None
+                    best_score = float("inf")
+
+                    # offscreen(화면 밖)일 수 있으니 is_visible로 거르지 않는다.
+                    source = candidates
+                    source_cnt = cnt
+                    source_kind = "button"
+                    if cnt == 0 and svg_candidates is not None and svg_cnt > 0:
+                        source = svg_candidates
+                        source_cnt = svg_cnt
+                        source_kind = "svg"
+
+                    for i in range(min(80, source_cnt)):
+                        try:
+                            el = source.nth(i)
+                            rect = el.evaluate(
                                 "el => { const r = el.getBoundingClientRect(); "
-                                "return { top: r.top, height: r.height }; }"
+                                "return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; }"
                             )
-                            video_center_y = video_rect["top"] + video_rect["height"] / 2
 
-                            closest_idx = None
-                            closest_dist = float("inf")
+                            # video 세로 범위 근처만 (너무 멀리 떨어진 버튼 제외)
+                            if rect["bottom"] < vrect["top"] - 250 or rect["top"] > vrect["bottom"] + 250:
+                                continue
 
-                            for i in range(min(10, icon_count)):
-                                try:
-                                    icon = comment_icons.nth(i)
-                                    rect = icon.evaluate(
-                                        "el => { const r = el.getBoundingClientRect(); "
-                                        "return { top: r.top, height: r.height }; }"
-                                    )
-                                    center_y = rect["top"] + rect["height"] / 2
-                                    dist = abs(center_y - video_center_y)
-                                    if dist < closest_dist:
-                                        closest_dist = dist
-                                        closest_idx = i
-                                except Exception:
+                            icy = rect["top"] + rect["height"] / 2
+                            dy = abs(icy - vcy)
+                            # x는 참고만(화면 크기/레이아웃에 따라 액션바가 비디오 안/밖 모두 가능)
+                            dx = abs(rect["left"] - vrect["right"])
+                            score = dy + dx * 0.2  # y 우선, x는 보조
+                            if score < best_score:
+                                best_score = score
+                                best_idx = i
+                        except Exception:
+                            continue
+
+                    if best_idx is None:
+                        self.logger.info(f"{label}: proximity 후보 없음 (video_right={vrect['right']:.1f})")
+                        return None
+
+                    self.logger.info(f"{label}: proximity 선택 index={best_idx}, score={best_score:.1f}")
+                    chosen = source.nth(best_idx)
+                    if source_kind == "svg":
+                        btn = chosen.locator(
+                            'xpath=ancestor::*[@role="button" or self::button][1]'
+                        )
+                        if btn.count() > 0:
+                            return btn.first
+                        return None
+                    return chosen
+                except Exception as e:
+                    self.logger.warning(f"{label}: proximity 탐색 실패: {e}")
+                    return None
+
+            # 좋아요
+            try:
+                like_xpath = (
+                    'xpath=.//*[@role="button" or self::button]'
+                    '[.//svg[contains(@aria-label,"좋아요") or contains(@aria-label,"Like") or contains(@aria-label,"Unlike")]][1]'
+                )
+                like_btn, expand_attempts = _find_button_scope_with_fallback(
+                    stats_root, like_xpath, "좋아요"
+                )
+                if like_btn:
+                    self.logger.info(f"좋아요: 버튼 발견 (scope_expand_attempts={expand_attempts})")
+                    v, scanned, total = _extract_count_from_button(like_btn, "likes")
+                    reel_data.likes = v
+                    self.logger.info(
+                        f"좋아요 수 수집: value={reel_data.likes}, scanned_spans={scanned}, candidate_spans={total}"
+                    )
+                else:
+                    # 공간기반 fallback (카드 밖 레이아웃 대응)
+                    like_btn2 = _find_action_button_by_proximity(
+                        'xpath=//*[@role="button" or self::button][contains(@aria-label,"좋아요") or contains(@aria-label,"Like") or contains(@aria-label,"Unlike")]',
+                        "좋아요(fallback)",
+                        'xpath=//svg[contains(@aria-label,"좋아요") or contains(@aria-label,"Like") or contains(@aria-label,"Unlike") or .//title[contains(., "좋아요") or contains(., "Like") or contains(., "Unlike")]]',
+                    )
+                    if like_btn2:
+                        try:
+                            like_btn2.scroll_into_view_if_needed(timeout=1000)
+                        except Exception:
+                            pass
+                        v, scanned, total = _extract_count_from_button(like_btn2, "likes")
+                        reel_data.likes = v
+                        self.logger.info(
+                            f"좋아요 수 수집(fallback): value={reel_data.likes}, scanned_spans={scanned}, candidate_spans={total}"
+                        )
+            except Exception as e:
+                self.logger.warning(f"좋아요 수 수집 실패: {e}")
+
+            # 댓글
+            try:
+                comment_xpath = (
+                    'xpath=.//*[@role="button" or self::button]'
+                    '[.//svg[contains(@aria-label,"댓글") or contains(@aria-label,"Comment")]][1]'
+                )
+                comment_btn, expand_attempts = _find_button_scope_with_fallback(
+                    stats_root, comment_xpath, "댓글"
+                )
+                if comment_btn:
+                    self.logger.info(f"댓글: 버튼 발견 (scope_expand_attempts={expand_attempts})")
+                    v, scanned, total = _extract_count_from_button(comment_btn, "comments")
+                    reel_data.comments = v
+                    self.logger.info(
+                        f"댓글 수 수집: value={reel_data.comments}, scanned_spans={scanned}, candidate_spans={total}"
+                    )
+                else:
+                    comment_btn2 = _find_action_button_by_proximity(
+                        'xpath=//*[@role="button" or self::button][contains(@aria-label,"댓글") or contains(@aria-label,"Comment")]',
+                        "댓글(fallback)",
+                        'xpath=//svg[contains(@aria-label,"댓글") or contains(@aria-label,"Comment") or .//title[contains(., "댓글") or contains(., "Comment")]]',
+                    )
+                    if comment_btn2:
+                        try:
+                            comment_btn2.scroll_into_view_if_needed(timeout=1000)
+                        except Exception:
+                            pass
+                        v, scanned, total = _extract_count_from_button(comment_btn2, "comments")
+                        reel_data.comments = v
+                        self.logger.info(
+                            f"댓글 수 수집(fallback): value={reel_data.comments}, scanned_spans={scanned}, candidate_spans={total}"
+                        )
+            except Exception as e:
+                self.logger.warning(f"댓글 수 수집 실패: {e}")
+
+            # 최종 fallback: 라벨(aria-label/title)이 전혀 안 잡히는 레이아웃 대응
+            # - video 오른쪽에 있는 버튼 "세로열"을 좌표로 클러스터링
+            # - 그 중 숫자(count)가 붙은 버튼 2개를 (좋아요, 댓글)로 확정
+            try:
+                if current_video and (reel_data.likes is None or reel_data.comments is None):
+                    vrect = current_video.evaluate(
+                        "el => { const r = el.getBoundingClientRect(); "
+                        "return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; }"
+                    )
+                    vcy = vrect["top"] + vrect["height"] / 2
+
+                    btns = page.locator('xpath=//*[@role="button" or self::button][.//svg]')
+                    btn_cnt = btns.count()
+                    scan_n = min(120, btn_cnt)
+
+                    clusters: dict[int, list[tuple[float, int]]] = {}
+                    for i in range(scan_n):
+                        try:
+                            b = btns.nth(i)
+                            rect = b.evaluate(
+                                "el => { const r = el.getBoundingClientRect(); "
+                                "return { top: r.top, bottom: r.bottom, left: r.left, height: r.height, width: r.width }; }"
+                            )
+                            # video 세로 범위 근처 + video 오른쪽 영역만
+                            if rect["bottom"] < vrect["top"] - 350 or rect["top"] > vrect["bottom"] + 350:
+                                continue
+                            if rect["left"] < vrect["right"] - 50:
+                                continue
+
+                            x_bucket = int(round(rect["left"] / 10.0) * 10)
+                            clusters.setdefault(x_bucket, []).append((rect["top"], i))
+                        except Exception:
+                            continue
+
+                    if not clusters:
+                        self.logger.info("counts(geometry_fallback): 후보 버튼 클러스터 없음")
+                    else:
+                        best_bucket = max(clusters.keys(), key=lambda k: len(clusters[k]))
+                        ordered = sorted(clusters[best_bucket], key=lambda t: t[0])
+
+                        values: list[int] = []
+                        for _, idx in ordered[:8]:
+                            try:
+                                b = btns.nth(idx)
+                                rect = b.evaluate(
+                                    "el => { const r = el.getBoundingClientRect(); "
+                                    "return { top: r.top, height: r.height, left: r.left }; }"
+                                )
+                                bcy = rect["top"] + rect["height"] / 2
+                                if abs(bcy - vcy) > 700:
                                     continue
 
-                            if closest_idx is not None:
-                                comment_button = comment_icons.nth(closest_idx)
-                                parent_div = comment_button.locator(
-                                    'xpath=ancestor::div[contains(@class, "html-div")][1]'
-                                )
-                                if parent_div.count() > 0:
-                                    container = parent_div.first
-                                    number_spans = container.locator(
-                                        'span.html-span.x1vvkbs'
-                                    ).all()
-                                    for span in number_spans[:3]:
-                                        try:
-                                            text = (span.text_content() or "").strip()
-                                            if re.match(
-                                                r'^[\d,]+$', text.replace(" ", "")
-                                            ):
-                                                comments_str = (
-                                                    text.replace(",", "")
-                                                    .replace(".", "")
-                                                    .strip()
-                                                )
-                                                if comments_str.isdigit():
-                                                    comments_value = int(comments_str)
-                                                    reel_data.comments = comments_value
-                                                    self.logger.info(
-                                                        f"댓글 수(백업): {reel_data.comments}"
-                                                    )
-                                                    break
-                                        except Exception:
-                                            continue
-                    except Exception:
-                        pass
+                                like_v, _, _ = _extract_count_from_button(b, "likes")
+                                com_v, _, _ = _extract_count_from_button(b, "comments")
+                                if like_v is not None:
+                                    values.append(like_v)
+                                elif com_v is not None:
+                                    values.append(com_v)
+                            except Exception:
+                                continue
 
+                        # 일반적으로 위에서부터 [좋아요, 댓글] 순서로 숫자가 존재
+                        if len(values) >= 2:
+                            if reel_data.likes is None:
+                                reel_data.likes = values[0]
+                            if reel_data.comments is None:
+                                reel_data.comments = values[1]
+
+                        self.logger.info(
+                            f"counts(geometry_fallback): x_bucket={best_bucket}, "
+                            f"cluster_size={len(ordered)}, extracted_nums={values[:4]}, "
+                            f"likes={reel_data.likes}, comments={reel_data.comments}"
+                        )
             except Exception as e:
-                self.logger.debug(f"댓글 수 추출 실패: {e}")
+                self.logger.warning(f"counts(geometry_fallback) 실패: {e}")
 
             # 크리에이터 이름 추출 - reels.txt에서 확인한 규칙 기반
             try:
@@ -1472,12 +1627,211 @@ class InstagramReelsScraper:
             except Exception as e:
                 self.logger.debug(f"링크 추출 실패: {e}")
 
+            # 네트워크 응답 가로채기 방식: Global Cache 전략
+            # - 모든 패킷의 릴스 데이터를 캐시에 저장
+            # - URL에서 shortcode 추출 후 캐시에서 조회
+            # - 타이밍 문제 해결 (패킷이 언제 와도 캐시에 저장됨)
+            try:
+                # 1. 글로벌 네트워크 리스너 등록 (한 번만)
+                if not self._network_listener_registered and self.browser_manager:
+                    page = self.browser_manager.get_page()
+                    if page:
+                        self._register_global_network_listener(page)
+                        self._network_listener_registered = True
+                
+                # 2. 현재 URL에서 shortcode 추출
+                target_code: Optional[str] = None
+                if reel_data.link:
+                    match = re.search(r"/reels?/([^/?]+)", str(reel_data.link))
+                    if match:
+                        target_code = match.group(1)
+                
+                # 3. 캐시에서 데이터 조회 (Retry 로직 포함)
+                needs_reel_id = reel_data.link and "/reels/" in reel_data.link and reel_data.link.rstrip("/").endswith("/reels")
+                needs_counts = reel_data.likes is None or reel_data.comments is None
+                
+                if needs_counts or needs_reel_id:
+                    cached_data = None
+                    # 최대 10번 시도 (5초)
+                    for attempt in range(10):
+                        if target_code and target_code in self._reels_cache:
+                            cached_data = self._reels_cache[target_code]
+                            self.logger.debug(f"💾 캐시에서 데이터 조회 성공: {target_code} (시도 {attempt + 1})")
+                            break
+                        if attempt < 9:
+                            time.sleep(0.5)  # 0.5초 대기
+                    
+                    if cached_data:
+                        if reel_data.likes is None and cached_data.get("likes") is not None:
+                            reel_data.likes = cached_data["likes"]
+                        if reel_data.comments is None and cached_data.get("comments") is not None:
+                            reel_data.comments = cached_data["comments"]
+                        if reel_data.views is None and cached_data.get("views") is not None:
+                            reel_data.views = cached_data["views"]
+                        if reel_data.posted_date is None and cached_data.get("posted_date") is not None:
+                            reel_data.posted_date = cached_data["posted_date"]
+                        if needs_reel_id and cached_data.get("code"):
+                            reel_data.link = f"https://www.instagram.com/reels/{cached_data['code']}/"
+                            self.logger.info(f"링크 업데이트 (캐시에서 reel_id 추출): {reel_data.link}")
+                        
+                        self.logger.info(
+                            f"counts(cache): "
+                            f"likes={reel_data.likes}, comments={reel_data.comments}, "
+                            f"views={reel_data.views}, posted_date={reel_data.posted_date}, "
+                            f"link={reel_data.link}"
+                        )
+                    else:
+                        self.logger.warning(f"⚠️ 캐시에서 데이터를 찾지 못함 (code={target_code}, 캐시 크기={len(self._reels_cache)})")
+
+            except Exception as e:
+                self.logger.warning(f"counts(cache) 실패: {e}")
+
             self.logger.info("릴스 정보 수집 완료")
             return reel_data
 
         except Exception as e:
             self.logger.error(f"릴스 정보 수집 중 오류: {e}")
             return None
+
+    def _register_global_network_listener(self, page: Page) -> None:
+        """
+        글로벌 네트워크 리스너 등록
+        모든 패킷의 릴스 데이터를 캐시에 저장
+        """
+        def handle_response(response) -> None:
+            url = response.url
+            # 인스타그램 API 요청 URL 패턴
+            if not ("graphql" in url or "/api/v1/feed/" in url or "/api/v1/media/" in url or "/info/" in url or "web_info" in url):
+                return
+
+            try:
+                json_body = response.json()
+                
+                # 원본 네트워크 데이터 저장 (디버깅용)
+                try:
+                    import json as json_module
+                    debug_dir = Path("output/debug/network_responses")
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    import time as time_module
+                    timestamp = time_module.strftime("%Y%m%d_%H%M%S_%f", time_module.localtime())
+                    url_safe = url.replace("https://", "").replace("http://", "").replace("/", "_").replace("?", "_").replace("&", "_")[:100]
+                    filename = f"{timestamp}_{url_safe}.json"
+                    filepath = debug_dir / filename
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        json_module.dump({
+                            "url": url,
+                            "timestamp": timestamp,
+                            "data": json_body
+                        }, f, indent=2, ensure_ascii=False)
+                    self.logger.debug(f"💾 네트워크 응답 저장: {filepath}")
+                except Exception:
+                    pass
+                
+                # 캐시에 저장
+                self._parse_and_cache_reels(json_body)
+            except Exception:
+                pass
+
+        page.on("response", handle_response)
+        self.logger.info("✅ 글로벌 네트워크 리스너 등록 완료")
+
+    def _parse_and_cache_reels(self, json_data: dict) -> None:
+        """
+        네트워크 패킷에서 릴스 정보를 추출하여 캐시에 저장 (구조 변화 대응 강화판)
+        
+        Args:
+            json_data: 네트워크 응답 JSON 데이터
+        """
+        try:
+            data_inner = json_data.get("data", {})
+            if not data_inner:
+                return
+
+            # 인스타그램이 데이터를 담는 다양한 키 패턴들
+            possible_roots = [
+                "xdt_api__v1__feed__timeline__connection",      # 메인 피드
+                "xdt_api__v1__clips__home__connection",         # 릴스 탭
+                "xdt_api__v1__clips__home__connection_v2",      # 릴스 탭 (신규 버전 - 현재 로그에서 발견됨)
+                "xdt_api__v1__media__shortcode__media",         # 단일 게시물 조회
+            ]
+
+            edges = []
+            
+            # 1. 알려진 루트 키 탐색
+            for root in possible_roots:
+                if root in data_inner:
+                    container = data_inner[root]
+                    # 리스트 형태(edges)로 들어오는 경우
+                    if "edges" in container:
+                        edges.extend(container["edges"])
+                    # 단일 객체로 들어오는 경우 (shortcode_media 등)
+                    elif "shortcode" in container or "code" in container:
+                        edges.append({"node": {"media": container}})
+            
+            # 2. 만약 알려진 키가 없으면, 'edges'를 가진 모든 하위 딕셔너리를 검색 (비상 대책)
+            if not edges:
+                for key, value in data_inner.items():
+                    if isinstance(value, dict) and "edges" in value:
+                        edges.extend(value["edges"])
+
+            # 3. 데이터 추출 및 캐싱
+            for edge in edges:
+                # node 밑에 media가 있을 수도, node가 바로 media일 수도 있음
+                node = edge.get("node", {})
+                media = node.get("media") or node  # media 키가 없으면 node 자체를 사용
+                
+                # 광고나 잘못된 데이터 제외
+                if not media or ("code" not in media and "shortcode" not in media):
+                    continue
+
+                shortcode = media.get("code") or media.get("shortcode")
+                
+                if shortcode:
+                    # 좋아요/댓글 수 추출 (없는 경우 None 처리)
+                    like_count = media.get("like_count")
+                    if like_count is None:  # 구조가 다를 수 있으므로 한번 더 체크
+                        like_count = media.get("edge_media_preview_like", {}).get("count")
+                    if like_count is None:
+                        like_count = media.get("edge_media_to_like", {}).get("count")
+
+                    comment_count = media.get("comment_count")
+                    if comment_count is None:
+                        comment_count = media.get("edge_media_to_comment", {}).get("count")
+                    
+                    # 조회수 추출
+                    views = media.get("video_view_count") or media.get("view_count") or media.get("play_count")
+                    if views is None:
+                        views = media.get("edge_media_preview", {}).get("video_view_count")
+                    
+                    # 게시일자 추출
+                    posted_date = None
+                    if "taken_at_timestamp" in media and isinstance(media["taken_at_timestamp"], (int, float)):
+                        import datetime
+                        posted_date = datetime.datetime.fromtimestamp(
+                            media["taken_at_timestamp"]
+                        ).isoformat()
+                    elif "taken_at" in media and isinstance(media["taken_at"], (int, float)):
+                        import datetime
+                        posted_date = datetime.datetime.fromtimestamp(
+                            media["taken_at"]
+                        ).isoformat()
+
+                    # 캐시에 저장 (이미 있으면 덮어쓰기)
+                    cached_item = {
+                        "code": shortcode,
+                        "likes": like_count,
+                        "comments": comment_count,
+                        "views": views,
+                        "posted_date": posted_date,
+                        "cached_at": time.time()
+                    }
+                    self._reels_cache[shortcode] = cached_item
+                    self.logger.debug(
+                        f"💾 캐시 저장: {shortcode} -> "
+                        f"L:{like_count}, C:{comment_count}, V:{views}"
+                    )
+        except Exception as e:
+            self.logger.debug(f"캐시 파싱 실패: {e}")
 
     def _move_to_next_reel(self, page: Page) -> bool:
         """
@@ -1506,7 +1860,7 @@ class InstagramReelsScraper:
                     page.mouse.wheel(0, viewport_height)
 
                     # 충분한 대기 시간 (릴스 전환 대기)
-                    time.sleep(4)  # 대기 시간 증가
+                    time.sleep(2)  # 대기 시간 최적화
 
                     # URL 변화 확인 (JS로 직접 가져오기)
                     new_url = page.evaluate("window.location.href")
@@ -1534,7 +1888,7 @@ class InstagramReelsScraper:
             try:
                 self.logger.debug("마우스 휠 실패 또는 변화 없음, 화살표 키 시도...")
                 page.keyboard.press("ArrowDown")
-                time.sleep(4)  # 충분한 대기
+                time.sleep(2)  # 대기 시간 최적화
 
                 # URL의 reel ID 또는 전체 URL 변경으로 확인
                 new_url = page.evaluate("window.location.href")
@@ -1558,6 +1912,36 @@ class InstagramReelsScraper:
             self.logger.warning(f"다음 릴스 이동 실패: {e}")
             return False
 
+    def _print_reel_summary(self, reel_data: ReelData, index: int) -> None:
+        """
+        수집된 릴스 데이터를 보기 좋게 출력
+
+        Args:
+            reel_data: 수집된 릴스 데이터
+            index: 수집 순서 (1부터 시작)
+        """
+        try:
+            print("\n" + "=" * 80)
+            print(f"📹 릴스 #{index} 수집 완료")
+            print("=" * 80)
+            print(f"👤 작성자: {reel_data.author or 'N/A'}")
+            if reel_data.title:
+                title_preview = reel_data.title[:60] + "..." if len(reel_data.title) > 60 else reel_data.title
+                print(f"📝 제목: {title_preview}")
+            print(f"❤️  좋아요: {reel_data.likes:,}" if reel_data.likes else "❤️  좋아요: N/A")
+            print(f"💬 댓글: {reel_data.comments:,}" if reel_data.comments else "💬 댓글: N/A")
+            print(f"👁️  조회수: {reel_data.views:,}" if reel_data.views else "👁️  조회수: N/A")
+            if reel_data.posted_date:
+                print(f"📅 게시일: {reel_data.posted_date}")
+            if reel_data.music:
+                music_preview = reel_data.music[:50] + "..." if len(reel_data.music) > 50 else reel_data.music
+                print(f"🎵 음악: {music_preview}")
+            if reel_data.link:
+                print(f"🔗 링크: {reel_data.link}")
+            print("=" * 80 + "\n")
+        except Exception as e:
+            self.logger.debug(f"릴스 요약 출력 실패: {e}")
+
     def start_collecting_reels(self) -> None:
         """
         릴스 수집 시작 (무한 반복)
@@ -1571,6 +1955,11 @@ class InstagramReelsScraper:
 
             page = self.browser_manager.get_page()
             self.logger.info("릴스 수집 시작...")
+            
+            # 글로벌 네트워크 리스너 등록 (한 번만)
+            if not self._network_listener_registered:
+                self._register_global_network_listener(page)
+                self._network_listener_registered = True
 
             # 릴스 페이지 로딩 대기
             self._wait_for_reels_page_load(page)
@@ -1581,13 +1970,38 @@ class InstagramReelsScraper:
             save_interval = 10  # 10개마다 저장
             consecutive_failures = 0  # 연속 실패 횟수
             max_failures = 5  # 최대 연속 실패 허용 횟수
+            last_poster: Optional[str] = None  # 릴스 전환 감지용 (DOM/카운트 갱신 안정화)
             
             while True:
                 try:
+                    # 릴스 전환 직후 DOM이 재사용/지연 갱신되는 경우가 있어,
+                    # video poster가 바뀔 때까지 짧게 기다린 뒤 수집한다.
+                    try:
+                        v = self._get_current_reel_video(page)
+                        poster = v.get_attribute("poster") if v else None
+                        if last_poster and poster and poster == last_poster:
+                            for _ in range(4):  # 최대 약 2초 대기 (최적화)
+                                time.sleep(0.5)
+                                v = self._get_current_reel_video(page)
+                                poster = v.get_attribute("poster") if v else None
+                                if poster and poster != last_poster:
+                                    break
+                    except Exception:
+                        poster = None
+
                     # 현재 릴스 정보 수집
                     reel_data = self._extract_current_reel_data(page)
                     
                     if reel_data:
+                        # 다음 루프를 위해 마지막 poster 갱신
+                        try:
+                            if reel_data.thumbnail:
+                                last_poster = reel_data.thumbnail
+                            elif poster:
+                                last_poster = poster
+                        except Exception:
+                            pass
+
                         # 중복 체크 (여러 방법 사용)
                         is_duplicate = False
                         duplicate_reason = None
@@ -1644,6 +2058,8 @@ class InstagramReelsScraper:
                             collected_reels.append(reel_data)
                             consecutive_failures = 0  # 성공 시 실패 카운터 리셋
                             self.logger.info(f"수집된 릴스 수: {len(collected_reels)} (작성자: {reel_data.author})")
+                            # 수집된 데이터 출력 (보기 좋게)
+                            self._print_reel_summary(reel_data, len(collected_reels))
                         else:
                             self.logger.info("중복 릴스 건너뜀")
                         
@@ -1662,12 +2078,12 @@ class InstagramReelsScraper:
                             self.logger.error(f"연속 {max_failures}회 이동 실패. 수집 중단.")
                             break
                         
-                        time.sleep(3)
+                        time.sleep(1)  # 대기 시간 최적화
                     else:
                         consecutive_failures = 0  # 이동 성공 시 실패 카운터 리셋
                         # 이동 성공 후 추가 안정화 대기
-                        time.sleep(1)
-                        random_delay(0.5, 1.0)
+                        time.sleep(0.5)  # 대기 시간 최적화
+                        random_delay(0.3, 0.5)  # 대기 시간 최적화
 
                 except KeyboardInterrupt:
                     self.logger.info("사용자에 의해 중단되었습니다.")
