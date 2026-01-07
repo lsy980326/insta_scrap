@@ -65,7 +65,11 @@ htmlcov/
 *.cover
 .hypothesis/
 
-# Workflow files (선택적)
-.workflow/*
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Workflow files (not for commit)
+.workflow/
 
 docs/*

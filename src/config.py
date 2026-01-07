@@ -67,6 +67,16 @@ class ScrapingConfig(BaseSettings):
     log_level: str = Field(default="INFO", description="로깅 레벨")
     log_file: Optional[Path] = Field(default=None, description="로그 파일 경로")
 
+    # 데이터베이스 설정
+    db_enabled: bool = Field(default=False, description="데이터베이스 사용 여부")
+    db_host: Optional[str] = Field(default=None, description="데이터베이스 호스트")
+    db_port: int = Field(default=5432, description="데이터베이스 포트")
+    db_name: Optional[str] = Field(default=None, description="데이터베이스 이름")
+    db_user: Optional[str] = Field(default=None, description="데이터베이스 사용자명")
+    db_password: Optional[str] = Field(default=None, description="데이터베이스 비밀번호")
+    db_pool_size: int = Field(default=5, ge=1, description="데이터베이스 연결 풀 크기")
+    db_max_overflow: int = Field(default=10, ge=0, description="데이터베이스 최대 오버플로우")
+
     @field_validator("log_file", mode="before")
     @classmethod
     def validate_log_file(cls, v: any) -> Optional[Path]:  # noqa: ANN001

@@ -14,6 +14,7 @@ class ReelData(BaseModel):
     thumbnail: Optional[str] = Field(default=None, description="영상 썸네일 URL")
     likes: Optional[int] = Field(default=None, ge=0, description="좋아요 수")
     comments: Optional[int] = Field(default=None, ge=0, description="댓글 수")
+    views: Optional[int] = Field(default=None, ge=0, description="조회수")
     author: Optional[str] = Field(default=None, description="크리에이터 이름")
     creator_profile_image: Optional[str] = Field(default=None, description="크리에이터 프로필 사진 URL")
     title: Optional[str] = Field(default=None, description="제목")
@@ -36,6 +37,7 @@ class ReelData(BaseModel):
                 "thumbnail": "https://example.com/thumbnail.jpg",
                 "likes": 1234,
                 "comments": 56,
+                "views": 10000,
                 "author": "username",
                 "music": "Song Name - Artist",
                 "link": "https://www.instagram.com/reel/abc123/",

@@ -20,6 +20,14 @@ from .utils.human_behavior import random_delay, random_mouse_movement, simulate_
 from .utils.logger import get_logger
 from .utils.wait_utils import safe_fill_input, wait_for_element, wait_for_page_load
 
+# 데이터베이스 관련 import (선택적)
+try:
+    from .database import init_db, get_db_session
+    from .database.repositories import CreatorRepository, ReelRepository, ScrapingSessionRepository
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+
 
 class InstagramReelsScraper:
     """
@@ -56,6 +64,21 @@ class InstagramReelsScraper:
 
         # 출력 디렉토리 생성
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 데이터베이스 초기화
+        self._db_enabled = False
+        self.logger.info(f"DB 설정 확인: db_enabled={self.config.db_enabled}, DB_AVAILABLE={DB_AVAILABLE}")
+        if self.config.db_enabled and DB_AVAILABLE:
+            self.logger.info("DB 초기화 시도 중...")
+            if init_db(self.config):
+                self._db_enabled = True
+                self.logger.info("✅ 데이터베이스 연결 초기화 완료")
+            else:
+                self.logger.warning("❌ 데이터베이스 연결 실패. 파일 저장만 사용합니다.")
+        elif self.config.db_enabled and not DB_AVAILABLE:
+            self.logger.warning("❌ 데이터베이스 모듈을 사용할 수 없습니다. 파일 저장만 사용합니다.")
+        else:
+            self.logger.info(f"DB 비활성화됨 (db_enabled={self.config.db_enabled})")
 
         self.logger.info("InstagramReelsScraper 초기화 완료")
 
@@ -272,38 +295,68 @@ class InstagramReelsScraper:
             self.logger.info("로그인 처리 대기 중... (20초, 브라우저 조작 없음)")
             time.sleep(20)  # Python의 time.sleep 사용 (브라우저 응답을 기다리지 않음)
 
-            # 로그인 결과 확인 (간단히 URL만 확인, 브라우저 조작 최소화)
-            try:
-                current_url = page.url
-                self.logger.info(f"현재 URL: {current_url}")
-
-                # 로그인 페이지에 여전히 있으면 경고만 출력
-                if "accounts/login" in current_url:
-                    self.logger.warning(
-                        "로그인 페이지에 여전히 있습니다. 로그인 실패 가능성이 있습니다."
-                    )
-                else:
-                    self.logger.info("로그인 성공으로 보입니다 (로그인 페이지가 아님)")
-            except Exception as e:
-                self.logger.warning(f"URL 가져오기 실패: {e}")
-                current_url = "https://www.instagram.com/"
-
-            # 로그인 후 팝업 처리
+            # 로그인 후 팝업 처리 (먼저 팝업 처리)
             self._handle_post_login_popup(page)
 
-            # 릴스 탭으로 이동
+            # 로그인 결과 확인 및 리다이렉트 감지
+            try:
+                # 페이지가 완전히 로드될 때까지 대기
+                page.wait_for_load_state("domcontentloaded", timeout=5000)
+                random_delay(1.0, 2.0)
+                
+                current_url = page.url
+                self.logger.info(f"로그인 후 현재 URL: {current_url}")
+
+                # 로그인 페이지로 리다이렉트되었는지 확인
+                if "accounts/login" in current_url or "/login" in current_url:
+                    self.logger.error("로그인 페이지로 리다이렉트되었습니다.")
+                    self.logger.error("로그인에 실패했거나 인증이 필요합니다.")
+                    raise LoginError("로그인에 실패했습니다. 로그인 페이지로 리다이렉트되었습니다.")
+                else:
+                    self.logger.info("로그인 성공 확인 (로그인 페이지가 아님)")
+            except LoginError:
+                raise
+            except Exception as e:
+                self.logger.warning(f"URL 확인 중 오류 (계속 진행): {e}")
+                # 오류가 발생해도 URL을 다시 확인
+                try:
+                    final_url = page.url
+                    if "accounts/login" in final_url or "/login" in final_url:
+                        self.logger.error("로그인 페이지로 리다이렉트되었습니다.")
+                        raise LoginError("로그인에 실패했습니다. 로그인 페이지로 리다이렉트되었습니다.")
+                except LoginError:
+                    raise
+                except Exception:
+                    pass  # 최종 확인도 실패하면 계속 진행
+
+            # 로그인 상태 최종 확인 (views_tracker.py와 동일한 로직)
+            try:
+                final_url = page.url
+                if "accounts/login" in final_url or "/login" in final_url:
+                    self.logger.error("로그인 후에도 로그인 페이지에 있습니다. 로그인에 실패했습니다.")
+                    raise LoginError("로그인에 실패했습니다. 로그인 페이지에 여전히 있습니다.")
+                else:
+                    self.logger.info("로그인 성공 확인 완료")
+            except LoginError:
+                raise
+            except Exception as e:
+                self.logger.warning(f"로그인 상태 확인 실패: {e}")
+
+            # 홈 탭으로 이동 (20초 대기 후)
+            try:
+                self.logger.info("홈 탭으로 이동 시도 중...")
+                self._navigate_to_home_tab(page)
+                self.logger.info("홈 탭 이동 완료")
+            except Exception as e:
+                self.logger.warning(f"홈 탭 이동 실패 (계속 진행): {e}")
+
+            # 릴스 탭으로 이동 (수집은 main.py에서 별도로 호출)
             try:
                 self.logger.info("릴스 탭으로 이동 시도 중...")
                 self.navigate_to_reels_tab()
                 self.logger.info("릴스 탭 이동 완료")
-                
-                # 릴스 수집 시작
-                self.logger.info("릴스 수집을 시작합니다...")
-                self.start_collecting_reels()
-            except KeyboardInterrupt:
-                self.logger.info("사용자에 의해 중단되었습니다.")
             except Exception as e:
-                self.logger.warning(f"릴스 탭 이동 또는 수집 실패: {e}")
+                self.logger.warning(f"릴스 탭 이동 실패: {e}")
 
             self.username = username
             self.password = password
@@ -521,6 +574,63 @@ class InstagramReelsScraper:
             self.logger.info("메인화면 로딩 완료")
         except Exception as e:
             self.logger.warning(f"메인화면 로딩 대기 중 오류 (계속 진행): {e}")
+
+    def _navigate_to_home_tab(self, page: Page) -> None:
+        """
+        홈 탭으로 이동
+
+        Args:
+            page: Playwright Page 객체
+        """
+        try:
+            self.logger.info("홈 탭 찾는 중...")
+            
+            # 홈 탭 셀렉터
+            home_tab_selectors = [
+                'a[href="/"]',
+                'a[href*="/"]:has-text("Home")',
+                'a[href*="/"]:has-text("홈")',
+                'nav a[href="/"]',
+                'nav a[href*="/"]',
+            ]
+            
+            home_tab = wait_for_element(
+                page, home_tab_selectors, timeout=10000, description="홈 탭"
+            )
+            
+            if not home_tab:
+                # 홈으로 직접 이동
+                self.logger.info("홈 탭을 찾을 수 없어 URL로 직접 이동합니다...")
+                page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=10000)
+                page.wait_for_load_state("domcontentloaded")
+                random_delay(1.0, 2.0)
+                return
+            
+            # 홈 탭 클릭
+            self.logger.info("홈 탭 클릭 중...")
+            home_tab.click()
+            
+            # 페이지 로드 대기
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=5000)
+            except Exception:
+                self.logger.debug("홈 탭 로드 대기 실패 (계속 진행)")
+            
+            random_delay(1.0, 2.0)
+            
+            # URL 확인
+            try:
+                current_url = page.url
+                if "/" in current_url and "accounts" not in current_url:
+                    self.logger.info(f"홈 탭으로 이동 완료: {current_url}")
+                else:
+                    self.logger.warning(f"홈 탭 이동 후 URL 확인 필요: {current_url}")
+            except Exception:
+                pass
+                
+        except Exception as e:
+            self.logger.warning(f"홈 탭 이동 실패 (계속 진행): {e}")
+            # 실패해도 계속 진행
 
     def navigate_to_reels_tab(self) -> bool:
         """
@@ -1703,6 +1813,14 @@ class InstagramReelsScraper:
                 json.dump(data_dict, f, ensure_ascii=False, indent=2)
 
             self.logger.info(f"데이터 저장 완료: {len(data)}개 항목")
+            
+            # DB가 활성화되어 있으면 DB에도 저장
+            if self._db_enabled:
+                self.logger.info("DB 저장 시작...")
+                self._save_to_db(data)
+            else:
+                self.logger.debug(f"DB 저장 건너뜀 (DB 활성화 여부: {self._db_enabled}, config.db_enabled: {self.config.db_enabled})")
+            
             return filepath
         except Exception as e:
             self.logger.error(f"데이터 저장 실패: {e}")
@@ -1746,3 +1864,67 @@ class InstagramReelsScraper:
         except Exception as e:
             self.logger.error(f"CSV 저장 실패: {e}")
             raise InstagramScraperError(f"CSV 저장에 실패했습니다: {e}") from e
+
+    def _save_to_db(self, data: list[ReelData]) -> None:
+        """
+        데이터베이스에 릴스 데이터 저장
+
+        Args:
+            data: 저장할 ReelData 리스트
+        """
+        if not self._db_enabled:
+            self.logger.warning("DB 저장 시도했지만 DB가 비활성화되어 있습니다.")
+            return
+
+        self.logger.info(f"DB에 {len(data)}개 릴스 저장 시작...")
+        try:
+            session_gen = get_db_session()
+            session = next(session_gen)
+
+            try:
+                creator_repo = CreatorRepository(session)
+                reel_repo = ReelRepository(session)
+                session_repo = ScrapingSessionRepository(session)
+
+                saved_count = 0
+                updated_count = 0
+
+                for reel_data in data:
+                    try:
+                        # 크리에이터 저장/업데이트
+                        if reel_data.author:
+                            creator_repo.create_or_update_creator(
+                                username=reel_data.author,
+                                profile_image_url=reel_data.creator_profile_image,
+                            )
+
+                        # 릴스 저장/업데이트
+                        reel, is_new = reel_repo.create_or_update_reel(reel_data)
+                        if is_new:
+                            saved_count += 1
+                        else:
+                            updated_count += 1
+
+                        # 통계 정보 추가 (시계열 추적)
+                        reel_repo.add_metric(
+                            reel=reel,
+                            likes=reel_data.likes,
+                            comments=reel_data.comments,
+                            views=reel_data.views,
+                        )
+
+                    except Exception as e:
+                        self.logger.warning(f"릴스 DB 저장 실패 (링크: {reel_data.link}): {e}")
+                        continue
+
+                session.commit()
+                self.logger.info(
+                    f"DB 저장 완료: 새로 저장 {saved_count}개, 업데이트 {updated_count}개"
+                )
+
+            finally:
+                session.close()
+
+        except Exception as e:
+            self.logger.warning(f"DB 저장 실패: {e}")
+            # DB 저장 실패해도 파일 저장은 성공했으므로 예외를 발생시키지 않음
