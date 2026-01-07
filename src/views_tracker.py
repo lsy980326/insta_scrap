@@ -20,6 +20,7 @@ from .exceptions import LoginError, ScrapingError
 from .models import ReelData
 from .utils.human_behavior import random_delay, simulate_page_interaction
 from .utils.logger import get_logger
+from .utils.session_manager import SessionManager
 from .utils.wait_utils import safe_fill_input, wait_for_element
 
 
@@ -40,6 +41,7 @@ class ReelViewsTracker:
         self.config = config or ScrapingConfig()
         self.browser_manager: Optional[BrowserManager] = None
         self.logger = get_logger(self.__class__.__name__)
+        self.session_manager = SessionManager(self.config)
         self._is_logged_in = False
 
         # 출력 디렉토리 생성
@@ -58,7 +60,14 @@ class ReelViewsTracker:
 
     def login(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
         """
-        인스타그램에 로그인 (조회수 추적용 - 릴스 탭 이동/수집 없이 로그인만 수행)
+        인스타그램에 로그인 (세션 관리 포함)
+
+        세션 관리 플로우:
+        1. 저장된 세션(쿠키 + User-Agent) 로드 시도
+        2. 세션이 있으면 브라우저에 설정하고 검증
+        3. 세션이 유효하면 로그인 완료
+        4. 세션이 없거나 무효하면 전체 로그인 진행
+        5. 로그인 성공 후 세션 저장
 
         Args:
             username: 인스타그램 사용자명 (None이면 config에서 가져옴)
@@ -76,8 +85,46 @@ class ReelViewsTracker:
         if not username or not password:
             raise LoginError("사용자명과 비밀번호가 필요합니다.")
 
+        account_id = username
+
         try:
-            self.logger.info(f"로그인 시도: {username}")
+            self.logger.info(f"로그인 시도: {account_id}")
+
+            # 1단계: 저장된 세션 로드 시도
+            session_data = self.session_manager.load_session(account_id)
+
+            if session_data:
+                cookies = session_data.get("cookies")
+                user_agent = session_data.get("user_agent")
+
+                if cookies and user_agent:
+                    self.logger.info("✅ 저장된 세션 발견, 세션 검증 시도 중...")
+
+                    # 2단계: User-Agent와 함께 브라우저 시작
+                    if self.browser_manager is None:
+                        self.browser_manager = BrowserManager(self.config, user_agent=user_agent)
+                        self.browser_manager.start()
+
+                    # 3단계: 쿠키 설정
+                    try:
+                        self.browser_manager.set_cookies(cookies)
+                    except Exception as e:
+                        self.logger.warning(f"쿠키 설정 실패, 전체 로그인 진행: {e}")
+                        session_data = None  # 세션 사용 불가, 전체 로그인 진행
+
+                    # 4단계: 세션 검증
+                    if session_data:
+                        page = self.browser_manager.get_page()
+                        if self.session_manager.verify_session(page, account_id=account_id):
+                            self.logger.info("✅ 저장된 세션으로 로그인 성공")
+                            self._is_logged_in = True
+                            return True
+                        else:
+                            self.logger.warning("⚠️ 저장된 세션이 만료됨, 전체 로그인 진행")
+
+            # 5단계: 전체 로그인 (세션 없음 또는 검증 실패)
+            if not session_data or not session_data.get("cookies") or not session_data.get("user_agent"):
+                self.logger.info("전체 로그인 프로세스 시작...")
 
             # 브라우저 시작 (아직 시작되지 않은 경우)
             if self.browser_manager is None:
@@ -267,6 +314,22 @@ class ReelViewsTracker:
                 self.logger.warning(f"로그인 상태 확인 실패: {e}")
 
             self._is_logged_in = True
+
+            # 6단계: 로그인 성공 후 세션 저장
+            try:
+                if self.browser_manager and self.browser_manager.context:
+                    session_data = self.session_manager.extract_session_data(
+                        self.browser_manager.context
+                    )
+                    self.session_manager.save_session(
+                        account_id=account_id,
+                        cookies=session_data["cookies"],
+                        user_agent=session_data["user_agent"],
+                    )
+                    self.logger.info("✅ 세션 저장 완료")
+            except Exception as e:
+                self.logger.warning(f"세션 저장 실패 (작업은 계속 진행): {e}")
+
             self.logger.info("로그인 프로세스 완료")
             return True
 
@@ -461,9 +524,9 @@ class ReelViewsTracker:
 
     def _extract_views_from_creator_reels_page(
         self, page: Page, creator_name: str, target_reel_ids: set[str]
-    ) -> dict[str, int]:
+    ) -> dict[str, dict[str, Optional[int]]]:
         """
-        크리에이터의 reels 페이지에서 조회수 추출
+        크리에이터의 reels 페이지에서 조회수, 좋아요 수, 댓글 수 추출
 
         Args:
             page: Playwright Page 객체
@@ -471,9 +534,9 @@ class ReelViewsTracker:
             target_reel_ids: 찾아야 할 릴스 ID 집합
 
         Returns:
-            {릴스ID: 조회수} 딕셔너리
+            {릴스ID: {views: 조회수, likes: 좋아요수, comments: 댓글수}} 딕셔너리
         """
-        views_dict: dict[str, int] = {}
+        metrics_dict: dict[str, dict[str, Optional[int]]] = {}
 
         try:
             self.logger.info(f"크리에이터 '{creator_name}'의 reels 페이지 접근 중...")
@@ -487,8 +550,8 @@ class ReelViewsTracker:
                 if "instagram.com" not in current_url or current_url == "about:blank":
                     self.logger.info("현재 페이지가 인스타그램이 아닙니다. 메인 페이지로 이동 후 reels 페이지로 이동합니다.")
                     page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(1)
-                    random_delay(0.5, 1.0)
+                    time.sleep(0.5)
+                    random_delay(0.3, 0.7)
             except Exception:
                 pass
             
@@ -499,12 +562,12 @@ class ReelViewsTracker:
                 referer="https://www.instagram.com/",
             )
 
-            # 페이지 로드 대기
-            time.sleep(3)
-            random_delay(1.0, 2.0)
+            # 페이지 로드 대기 (최적화: 대기 시간 단축)
+            time.sleep(1)
+            random_delay(0.5, 1.0)
             
             try:
-                page.wait_for_load_state("networkidle", timeout=5000)
+                page.wait_for_load_state("domcontentloaded", timeout=3000)
             except Exception:
                 pass
 
@@ -519,7 +582,7 @@ class ReelViewsTracker:
 
             self.logger.info(f"크리에이터 '{creator_name}'의 reels 페이지에서 조회수 추출 중...")
 
-            max_scrolls = 3  # 최대 스크롤 횟수
+            max_scrolls = 5  # 최대 스크롤 횟수
             
             # 스크롤하면서 조회수 추출 시도
             for scroll_attempt in range(max_scrolls + 1):
@@ -547,43 +610,140 @@ class ReelViewsTracker:
                             continue
 
                         # 이미 찾았으면 스킵
-                        if reel_id in views_dict:
+                        if reel_id in metrics_dict:
                             continue
 
-                        # 조회수 추출
+                        # 조회수, 좋아요 수, 댓글 수 추출
                         try:
                             element_handle = link_elem.element_handle()
                             if element_handle:
                                 extracted_data = element_handle.evaluate("""
                                     (link) => {
-                                        const viewContainer = link.querySelector('div._aajy');
-                                        if (!viewContainer) return null;
-
-                                        const viewIcon = viewContainer.querySelector('svg[aria-label="조회수 아이콘"]');
-                                        if (!viewIcon) return null;
-
-                                        const spans = viewContainer.querySelectorAll('span.html-span.x1vvkbs, span.x1vvkbs');
+                                        const result = { views: null, likes: null, comments: null };
+                                        
+                                        // 링크의 부모 요소에서 통계 정보 찾기
+                                        let parent = link.parentElement;
+                                        let depth = 0;
+                                        
+                                        // 통계 컨테이너 찾기 (일반적으로 통계들이 함께 있는 컨테이너)
+                                        while (parent && depth < 5) {
+                                            // 구조 파악: _aajz > _aaj- (좋아요/댓글) > _aaj_ (조회수)
+                                            
+                                            // 1. 조회수 찾기: _aaj_ 안에 조회수 아이콘과 숫자
+                                            const viewsContainer = parent.querySelector('div._aaj_');
+                                            if (viewsContainer && !result.views) {
+                                                const viewsIcon = viewsContainer.querySelector('svg[aria-label*="조회수"], svg[aria-label*="view"]');
+                                                if (viewsIcon) {
+                                                    // 아이콘 다음 형제 요소에서 숫자 찾기
+                                                    let sibling = viewsIcon.parentElement;
+                                                    if (sibling) {
+                                                        // 같은 부모의 span 요소들 찾기
+                                                        const spans = sibling.parentElement.querySelectorAll('span');
                                         for (const span of spans) {
                                             const text = (span.textContent || '').trim();
-                                            if (/^[\\d.,만천]+$/.test(text.replace(/\\s/g, ''))) {
-                                                return text;
+                                                            if (/^[\\d.,만천]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
+                                                                result.views = text;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // 2. 좋아요와 댓글 찾기: _aaj- 안에 ul > li 순서대로
+                                            const statsContainer = parent.querySelector('div._aaj-');
+                                            if (statsContainer) {
+                                                const ul = statsContainer.querySelector('ul');
+                                                if (ul) {
+                                                    const lis = Array.from(ul.querySelectorAll('li'));
+                                                    
+                                                    // 첫 번째 li: 좋아요 (위)
+                                                    if (lis.length > 0 && !result.likes) {
+                                                        const firstLi = lis[0];
+                                                        const spans = firstLi.querySelectorAll('span.html-span.x1vvkbs');
+                                                        for (const span of spans) {
+                                                            const text = (span.textContent || '').trim();
+                                                            if (/^[\\d.,만천]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
+                                                                result.likes = text;
+                                                                break;
                                             }
                                         }
+                                                    }
+                                                    
+                                                    // 두 번째 li: 댓글 (아래)
+                                                    if (lis.length > 1 && result.comments === null) {
+                                                        const secondLi = lis[1];
+                                                        const spans = secondLi.querySelectorAll('span.html-span.x1vvkbs');
+                                                        for (const span of spans) {
+                                                            const text = (span.textContent || '').trim();
+                                                            if (/^[\\d.,만천]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
+                                                                result.comments = text;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // 모든 통계를 찾았으면 종료
+                                            if (result.views && result.likes && result.comments !== null) {
+                                                break;
+                                            }
+                                            
+                                            parent = parent.parentElement;
+                                            depth++;
+                                        }
+                                        
+                                        // 하나라도 찾았으면 반환
+                                        if (result.views || result.likes || result.comments !== null) {
+                                            return result;
+                                        }
+                                        
                                         return null;
                                     }
                                 """)
 
                                 if extracted_data:
-                                    views_value = self._parse_number(extracted_data)
+                                    metrics = {
+                                        'views': None,
+                                        'likes': None,
+                                        'comments': None
+                                    }
+                                    
+                                    if extracted_data.get('views'):
+                                        views_value = self._parse_number(extracted_data['views'])
                                     if views_value and views_value > 0:
-                                        if reel_id not in views_dict:
-                                            views_dict[reel_id] = views_value
+                                            metrics['views'] = views_value
+                                    
+                                    if extracted_data.get('likes'):
+                                        likes_value = self._parse_number(extracted_data['likes'])
+                                        if likes_value and likes_value > 0:
+                                            metrics['likes'] = likes_value
+                                    
+                                    if extracted_data.get('comments'):
+                                        comments_value = self._parse_number(extracted_data['comments'])
+                                        if comments_value and comments_value >= 0:  # 댓글은 0도 유효
+                                            metrics['comments'] = comments_value
+                                    
+                                    # 하나라도 찾았으면 저장
+                                    if metrics['views'] or metrics['likes'] or metrics['comments'] is not None:
+                                        if reel_id not in metrics_dict:
+                                            metrics_dict[reel_id] = metrics
+                                            # 모든 통계를 로그에 표시 (없으면 "없음" 표시)
+                                            log_items = []
+                                            log_items.append(f"좋아요: {metrics['likes'] if metrics['likes'] else '없음'}")
+                                            log_items.append(f"댓글: {metrics['comments'] if metrics['comments'] is not None else '없음'}")
+                                            log_items.append(f"조회수: {metrics['views'] if metrics['views'] else '없음'}")
                                             self.logger.info(
-                                                f"릴스 ID '{reel_id}' 조회수: {views_value} ({extracted_data})"
+                                                f"릴스 ID '{reel_id}' - {', '.join(log_items)}"
                                             )
                                         
-                                        if len(views_dict) >= len(target_reel_ids):
+                                        if len(metrics_dict) >= len(target_reel_ids):
                                             break
+                                else:
+                                    # 디버깅: 통계를 못 찾은 경우 로그
+                                    if scroll_attempt == 0:  # 첫 시도에서만 로그
+                                        self.logger.debug(f"통계 추출 실패 (릴스 ID: {reel_id}) - 링크는 찾았지만 통계 정보를 찾을 수 없습니다")
 
                         except Exception as e:
                             self.logger.debug(f"조회수 추출 실패 (릴스 ID: {reel_id}): {e}")
@@ -594,14 +754,14 @@ class ReelViewsTracker:
                         continue
                 
                 # 모든 목표 릴스 ID를 찾았으면 스크롤 루프 종료
-                if len(views_dict) >= len(target_reel_ids):
-                    self.logger.info(f"모든 목표 릴스의 조회수를 찾았습니다. (총 {len(views_dict)}개)")
+                if len(metrics_dict) >= len(target_reel_ids):
+                    self.logger.info(f"모든 목표 릴스의 통계를 찾았습니다. (총 {len(metrics_dict)}개)")
                     break
                 
                 # 스크롤이 필요하고 아직 목표를 찾지 못했으면 스크롤 시도
-                if len(views_dict) < len(target_reel_ids) and scroll_attempt < max_scrolls:
+                if len(metrics_dict) < len(target_reel_ids) and scroll_attempt < max_scrolls:
                     self.logger.info(
-                        f"조회수 미발견 릴스: {len(target_reel_ids) - len(views_dict)}개. "
+                        f"통계 미발견 릴스: {len(target_reel_ids) - len(metrics_dict)}개. "
                         f"스크롤 다운 시도 ({scroll_attempt + 1}/{max_scrolls})..."
                     )
                     
@@ -611,20 +771,27 @@ class ReelViewsTracker:
                             viewport_height = viewport["height"]
                             page.mouse.move(viewport["width"] // 2, viewport["height"] // 2)
                             page.mouse.wheel(0, viewport_height)
-                            time.sleep(2)
-                            random_delay(1.0, 2.0)
+                            time.sleep(1)
+                            random_delay(0.5, 1.0)
                     except Exception as e:
                         self.logger.debug(f"스크롤 실패: {e}")
                         break
 
+            # 추출된 통계 요약 로그
+            total_found = len(metrics_dict)
+            views_found = sum(1 for m in metrics_dict.values() if m.get('views'))
+            likes_found = sum(1 for m in metrics_dict.values() if m.get('likes'))
+            comments_found = sum(1 for m in metrics_dict.values() if m.get('comments') is not None)
+
             self.logger.info(
-                f"크리에이터 '{creator_name}'에서 {len(views_dict)}개 조회수 추출 완료"
+                f"크리에이터 '{creator_name}'에서 {total_found}개 릴스 통계 추출 완료 "
+                f"(좋아요: {likes_found}개, 댓글: {comments_found}개, 조회수: {views_found}개)"
             )
 
         except Exception as e:
             self.logger.error(f"크리에이터 '{creator_name}'의 reels 페이지 처리 실패: {e}")
 
-        return views_dict
+        return metrics_dict
 
     def track_views(self, input_file: Path, output_file: Optional[Path] = None) -> Path:
         """
@@ -702,26 +869,44 @@ class ReelViewsTracker:
                         )
                         continue
 
-                    # 크리에이터의 reels 페이지에서 조회수 추출
-                    views_dict = self._extract_views_from_creator_reels_page(
+                    # 크리에이터의 reels 페이지에서 조회수, 좋아요, 댓글 수 추출
+                    metrics_dict = self._extract_views_from_creator_reels_page(
                         page, creator_name, target_reel_ids
                     )
 
-                    # 조회수를 원본 데이터에 추가 및 DB 업데이트
-                    for reel_id, views in views_dict.items():
+                    # 통계를 원본 데이터에 추가 및 DB 업데이트
+                    for reel_id, metrics in metrics_dict.items():
                         for idx in reel_indices[reel_id]:
-                            reels[idx].views = views
-                            total_updated += 1
+                            # 조회수 업데이트
+                            if metrics.get('views'):
+                                reels[idx].views = metrics['views']
+                            # 좋아요 수 업데이트
+                            if metrics.get('likes'):
+                                reels[idx].likes = metrics['likes']
+                            # 댓글 수 업데이트
+                            if metrics.get('comments') is not None:
+                                reels[idx].comments = metrics['comments']
                             
-                            # DB 업데이트 (활성화된 경우)
+                            # 하나라도 업데이트되었으면 카운트
+                            if metrics.get('views') or metrics.get('likes') or metrics.get('comments') is not None:
+                                total_updated += 1
+                            
+                            # DB 업데이트 (활성화된 경우) - 좋아요, 댓글, 조회수 모두 저장
                             if self._db_enabled:
                                 try:
-                                    self._update_views_in_db(reel_id, views, reels[idx])
+                                    # 추출된 값이 있으면 사용, 없으면 기존 값 사용
+                                    views = metrics.get('views') if metrics.get('views') is not None else reels[idx].views
+                                    likes = metrics.get('likes') if metrics.get('likes') is not None else reels[idx].likes
+                                    comments = metrics.get('comments') if metrics.get('comments') is not None else reels[idx].comments
+                                    
+                                    # 하나라도 값이 있으면 DB에 저장
+                                    if views is not None or likes is not None or comments is not None:
+                                        self._update_views_in_db(reel_id, views, reels[idx], likes, comments)
                                 except Exception as e:
-                                    self.logger.debug(f"DB 조회수 업데이트 실패 (계속 진행): {e}")
+                                    self.logger.debug(f"DB 통계 업데이트 실패 (계속 진행): {e}")
 
-                    # 크리에이터 간 딜레이
-                    random_delay(2.0, 4.0)
+                    # 크리에이터 간 딜레이 (최적화: 대기 시간 단축)
+                    random_delay(1.0, 2.0)
                     
                 except Exception as e:
                     self.logger.error(f"크리에이터 '{creator_name}' 처리 중 오류: {e}")
@@ -756,7 +941,7 @@ class ReelViewsTracker:
                 json.dump(data_dict, f, ensure_ascii=False, indent=2)
 
             self.logger.info(
-                f"조회수 추적 완료: {total_updated}개 릴스에 조회수 추가됨 (총 {len(reels)}개)"
+                f"통계 추적 완료: {total_updated}개 릴스에 통계 추가됨 (총 {len(reels)}개)"
             )
             if failed_creators:
                 self.logger.warning(f"처리 실패한 크리에이터: {', '.join(failed_creators)}")
@@ -768,14 +953,23 @@ class ReelViewsTracker:
             self.logger.error(f"조회수 추적 실패: {e}")
             raise ScrapingError(f"조회수 추적에 실패했습니다: {e}") from e
 
-    def _update_views_in_db(self, reel_id: str, views: int, reel_data: ReelData) -> None:
+    def _update_views_in_db(
+        self, 
+        reel_id: str, 
+        views: Optional[int], 
+        reel_data: ReelData,
+        likes: Optional[int] = None,
+        comments: Optional[int] = None
+    ) -> None:
         """
-        DB에서 릴스 조회수 업데이트
+        DB에서 릴스 통계 업데이트 (조회수, 좋아요, 댓글)
 
         Args:
             reel_id: Instagram 릴스 ID
-            views: 조회수
+            views: 조회수 (None이면 reel_data에서 가져옴)
             reel_data: ReelData 객체 (좋아요, 댓글 정보 포함)
+            likes: 좋아요 수 (None이면 reel_data에서 가져옴)
+            comments: 댓글 수 (None이면 reel_data에서 가져옴)
         """
         if not self._db_enabled:
             return
@@ -793,22 +987,35 @@ class ReelViewsTracker:
                     self.logger.debug(f"DB에서 릴스를 찾을 수 없습니다: {reel_id}")
                     return
 
-                # 통계 정보 추가 (시계열 추적)
-                reel_repo.add_metric(
-                    reel=reel,
-                    likes=reel_data.likes,
-                    comments=reel_data.comments,
-                    views=views,
-                )
+                # 통계 정보 추가 (시계열 추적) - 좋아요, 댓글, 조회수 모두 저장
+                final_views = views if views is not None else reel_data.views
+                final_likes = likes if likes is not None else reel_data.likes
+                final_comments = comments if comments is not None else reel_data.comments
 
-                session.commit()
-                self.logger.debug(f"DB 조회수 업데이트 완료: {reel_id} (조회수: {views})")
+                # 하나라도 값이 있으면 DB에 저장
+                if final_views is not None or final_likes is not None or final_comments is not None:
+                    reel_repo.add_metric(
+                        reel=reel,
+                        likes=final_likes,
+                        comments=final_comments,
+                        views=final_views,
+                    )
+
+                    session.commit()
+                    stats = []
+                    if final_views is not None:
+                        stats.append(f"조회수: {final_views}")
+                    if final_likes is not None:
+                        stats.append(f"좋아요: {final_likes}")
+                    if final_comments is not None:
+                        stats.append(f"댓글: {final_comments}")
+                    self.logger.debug(f"DB 통계 업데이트 완료: {reel_id} ({', '.join(stats) if stats else '없음'})")
 
             finally:
                 session.close()
 
         except Exception as e:
-            self.logger.warning(f"DB 조회수 업데이트 실패: {e}")
+            self.logger.warning(f"DB 통계 업데이트 실패: {e}")
             raise
 
     def close(self) -> None:
