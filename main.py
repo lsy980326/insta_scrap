@@ -1,10 +1,18 @@
 """
 프로젝트 루트에서 실행 가능한 메인 파일
 
-실행 방법:
-1. Poetry 사용 (권장): python -m poetry run python main.py
-2. 가상 환경 활성화 후: python -m poetry shell -> python main.py
-3. 직접 실행 (가상 환경 필요): python main.py
+실행 방법 (macOS):
+1. Poetry 사용 (권장): 
+   poetry run python3 main.py
+   
+2. 가상 환경 활성화 후:
+   poetry shell
+   python3 main.py
+   
+3. 직접 실행 (가상 환경 필요):
+   python3 main.py
+
+참고: macOS에서는 'python' 대신 'python3'를 사용하세요.
 """
 
 import sys
@@ -24,10 +32,10 @@ except ImportError as e:
     print("=" * 60)
     print("\n해결 방법:")
     print("1. Poetry를 사용하여 실행하세요:")
-    print("   python -m poetry run python main.py")
+    print("   poetry run python3 main.py")
     print("\n2. 또는 가상 환경을 활성화한 후 실행하세요:")
-    print("   python -m poetry shell")
-    print("   python main.py")
+    print("   poetry shell")
+    print("   python3 main.py")
     print("\n3. 또는 Poetry 가상 환경에 직접 접근:")
     print("   python -m poetry env info --path")
     print("   (출력된 경로의 Scripts\\python.exe main.py)")
@@ -68,18 +76,24 @@ def main() -> None:
             logger.info("로그인 정보가 설정되어 있습니다. 로그인을 시도합니다...")
             scraper.login()
             logger.info("로그인 성공! 릴스 탭까지 이동 완료.")
+            
+            # 릴스 수집 시작
+            logger.info("릴스 수집을 시작합니다...")
+            logger.info("수집을 중단하려면 Ctrl+C를 누르세요.")
+            scraper.start_collecting_reels()
+        else:
+            logger.warning("로그인 정보가 없습니다. 로그인 후 수집을 시작할 수 없습니다.")
+            logger.info("프로그램이 종료되었습니다.")
 
+    except KeyboardInterrupt:
+        logger.info("\n사용자에 의해 수집이 중단되었습니다.")
     except Exception as e:
         logger.error(f"오류 발생: {e}")
         raise
-    # finally:
-    #     # 브라우저 종료 (주석 처리 - 브라우저가 자동으로 닫히지 않도록)
-    #     if scraper.browser_manager:
-    #         scraper.browser_manager.close()
-    
-    # 브라우저를 열어둔 채로 종료 (수동으로 닫을 수 있도록)
-    logger.info("프로그램이 종료되었습니다. 브라우저는 열려 있습니다.")
-    logger.info("브라우저를 닫으려면 Ctrl+C를 누르거나 브라우저를 직접 닫으세요.")
+    finally:
+        # 브라우저를 열어둔 채로 종료 (수동으로 닫을 수 있도록)
+        logger.info("프로그램이 종료되었습니다. 브라우저는 열려 있습니다.")
+        logger.info("브라우저를 닫으려면 브라우저를 직접 닫으세요.")
 
 
 if __name__ == "__main__":
