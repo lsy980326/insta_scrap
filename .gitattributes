@@ -1,0 +1,4 @@
+# git-crypt 설정
+# .env 파일을 git-crypt로 암호화
+.env filter=git-crypt diff=git-crypt
+
