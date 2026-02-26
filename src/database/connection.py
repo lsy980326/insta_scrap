@@ -3,7 +3,7 @@
 SQLAlchemy를 사용한 PostgreSQL 연결 관리
 """
 
-from typing import Generator, Optional
+from collections.abc import Generator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -15,11 +15,11 @@ from .models import Base
 logger = get_logger(__name__)
 
 # 전역 변수
-_engine: Optional[object] = None
-_SessionLocal: Optional[sessionmaker] = None
+_engine: object | None = None
+_SessionLocal: sessionmaker | None = None
 
 
-def get_database_url(config: ScrapingConfig) -> Optional[str]:
+def get_database_url(config: ScrapingConfig) -> str | None:
     """
     데이터베이스 URL 생성
 

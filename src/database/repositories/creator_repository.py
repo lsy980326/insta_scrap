@@ -3,13 +3,11 @@
 크리에이터 데이터 접근 로직
 """
 
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..models import Creator
-
 from ...utils.logger import get_logger
+from ..models import Creator
 
 logger = get_logger(__name__)
 
@@ -26,7 +24,7 @@ class CreatorRepository:
         """
         self.session = session
 
-    def find_by_username(self, username: str) -> Optional[Creator]:
+    def find_by_username(self, username: str) -> Creator | None:
         """
         사용자명으로 크리에이터 조회
 
@@ -39,7 +37,7 @@ class CreatorRepository:
         return self.session.query(Creator).filter(Creator.username == username).first()
 
     def create_or_update_creator(
-        self, username: str, profile_image_url: Optional[str] = None
+        self, username: str, profile_image_url: str | None = None
     ) -> tuple[Creator, bool]:
         """
         크리에이터 생성 또는 업데이트

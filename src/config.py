@@ -4,7 +4,6 @@ Pydantic을 사용한 타입 안전한 설정 관리
 """
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,16 +13,16 @@ class ScrapingConfig(BaseSettings):
     """스크래핑 설정"""
 
     # 인스타그램 로그인 정보
-    instagram_username: Optional[str] = Field(default=None, description="인스타그램 사용자명")
-    instagram_password: Optional[str] = Field(default=None, description="인스타그램 비밀번호")
+    instagram_username: str | None = Field(default=None, description="인스타그램 사용자명")
+    instagram_password: str | None = Field(default=None, description="인스타그램 비밀번호")
 
     # 숏트렌드 로그인 정보
-    shortrend_email: Optional[str] = Field(default=None, description="숏트렌드 이메일")
-    shortrend_password: Optional[str] = Field(default=None, description="숏트렌드 비밀번호")
+    shortrend_email: str | None = Field(default=None, description="숏트렌드 이메일")
+    shortrend_password: str | None = Field(default=None, description="숏트렌드 비밀번호")
 
     # 스크래핑 설정
-    hashtag: Optional[str] = Field(default=None, description="해시태그 (예: #fitness)")
-    target_url: Optional[str] = Field(default=None, description="특정 릴스 URL")
+    hashtag: str | None = Field(default=None, description="해시태그 (예: #fitness)")
+    target_url: str | None = Field(default=None, description="특정 릴스 URL")
 
     # 출력 설정
     output_dir: Path = Field(default=Path("output"), description="출력 디렉토리")
@@ -35,24 +34,26 @@ class ScrapingConfig(BaseSettings):
     playwright_browser: str = Field(
         default="chromium", description="브라우저 (chromium, firefox, webkit)"
     )
-    playwright_storage_state: Optional[Path] = Field(
+    playwright_storage_state: Path | None = Field(
         default=None, description="브라우저 상태 저장 경로 (쿠키/세션 유지)"
     )
+    browser_locale: str = Field(default="ko-KR", description="브라우저 로케일 (예: ja-JP, en-US)")
+    browser_timezone: str = Field(default="Asia/Seoul", description="브라우저 타임존 (예: Asia/Tokyo)")
 
     # 프록시 설정
-    proxy_server: Optional[str] = Field(
+    proxy_server: str | None = Field(
         default=None, description="프록시 서버 (예: http://proxy.example.com:8080)"
     )
-    proxy_username: Optional[str] = Field(default=None, description="프록시 사용자명")
-    proxy_password: Optional[str] = Field(default=None, description="프록시 비밀번호")
+    proxy_username: str | None = Field(default=None, description="프록시 사용자명")
+    proxy_password: str | None = Field(default=None, description="프록시 비밀번호")
 
     # 스크래핑 제한
-    max_reels: Optional[int] = Field(default=None, ge=1, description="최대 수집 개수")
+    max_reels: int | None = Field(default=None, ge=1, description="최대 수집 개수")
     request_delay: float = Field(default=2.0, ge=0.0, description="요청 간 딜레이 (초)")
 
     @field_validator("max_reels", mode="before")
     @classmethod
-    def validate_max_reels(cls, v: any) -> Optional[int]:  # noqa: ANN001
+    def validate_max_reels(cls, v: any) -> int | None:  # noqa: ANN001
         """max_reels 빈 문자열 처리"""
         if v == "" or v is None:
             return None
@@ -65,15 +66,15 @@ class ScrapingConfig(BaseSettings):
 
     # 로깅 설정
     log_level: str = Field(default="INFO", description="로깅 레벨")
-    log_file: Optional[Path] = Field(default=None, description="로그 파일 경로")
+    log_file: Path | None = Field(default=None, description="로그 파일 경로")
 
     # 데이터베이스 설정
     db_enabled: bool = Field(default=False, description="데이터베이스 사용 여부")
-    db_host: Optional[str] = Field(default=None, description="데이터베이스 호스트")
+    db_host: str | None = Field(default=None, description="데이터베이스 호스트")
     db_port: int = Field(default=5432, description="데이터베이스 포트")
-    db_name: Optional[str] = Field(default=None, description="데이터베이스 이름")
-    db_user: Optional[str] = Field(default=None, description="데이터베이스 사용자명")
-    db_password: Optional[str] = Field(default=None, description="데이터베이스 비밀번호")
+    db_name: str | None = Field(default=None, description="데이터베이스 이름")
+    db_user: str | None = Field(default=None, description="데이터베이스 사용자명")
+    db_password: str | None = Field(default=None, description="데이터베이스 비밀번호")
     db_pool_size: int = Field(default=5, ge=1, description="데이터베이스 연결 풀 크기")
     db_max_overflow: int = Field(default=10, ge=0, description="데이터베이스 최대 오버플로우")
 
@@ -87,7 +88,7 @@ class ScrapingConfig(BaseSettings):
 
     @field_validator("log_file", mode="before")
     @classmethod
-    def validate_log_file(cls, v: any) -> Optional[Path]:  # noqa: ANN001
+    def validate_log_file(cls, v: any) -> Path | None:  # noqa: ANN001
         """log_file 빈 문자열 처리"""
         if v == "" or v is None:
             return None

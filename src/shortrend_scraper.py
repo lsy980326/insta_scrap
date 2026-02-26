@@ -7,7 +7,6 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from playwright.sync_api import Page
 
@@ -27,9 +26,9 @@ class ShortrendScraper:
 
     def __init__(
         self,
-        config: Optional[ScrapingConfig] = None,
-        email: Optional[str] = None,
-        password: Optional[str] = None,
+        config: ScrapingConfig | None = None,
+        email: str | None = None,
+        password: str | None = None,
     ) -> None:
         """
         초기화
@@ -43,7 +42,7 @@ class ShortrendScraper:
         # 직접 전달받은 값 우선, 없으면 config에서 가져오기
         self.email = email or self.config.shortrend_email
         self.password = password or self.config.shortrend_password
-        self.browser_manager: Optional[BrowserManager] = None
+        self.browser_manager: BrowserManager | None = None
         self.logger = get_logger(self.__class__.__name__)
 
         # 출력 디렉토리 생성
@@ -51,7 +50,7 @@ class ShortrendScraper:
 
         self.logger.info("ShortrendScraper 초기화 완료")
 
-    def login(self, email: Optional[str] = None, password: Optional[str] = None) -> bool:
+    def login(self, email: str | None = None, password: str | None = None) -> bool:
         """
         숏트렌드에 로그인
 
@@ -362,7 +361,7 @@ class ShortrendScraper:
         except KeyboardInterrupt:
             self.logger.info("사용자에 의해 중단되었습니다.")
 
-    def _parse_number(self, text: str) -> Optional[int]:
+    def _parse_number(self, text: str) -> int | None:
         """
         텍스트에서 숫자 추출 (예: "208.6만" -> 2086000, "8.0만" -> 80000)
 
@@ -408,7 +407,7 @@ class ShortrendScraper:
 
         return None
 
-    def _extract_reel_data(self, reel_card) -> Optional[ShortrendReelData]:
+    def _extract_reel_data(self, reel_card) -> ShortrendReelData | None:
         """
         릴스 카드에서 데이터 추출 (최적화: JavaScript로 일괄 추출)
 
@@ -782,7 +781,7 @@ class ShortrendScraper:
             self.logger.error(f"릴스 수집 실패: {e}")
             raise ScrapingError(f"릴스 수집에 실패했습니다: {e}") from e
 
-    def save_to_json(self, data: list[ShortrendReelData], filename: Optional[str] = None) -> Path:
+    def save_to_json(self, data: list[ShortrendReelData], filename: str | None = None) -> Path:
         """
         데이터를 JSON 파일로 저장
 

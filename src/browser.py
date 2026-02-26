@@ -4,7 +4,6 @@ Playwright 브라우저 관리 모듈
 
 import platform
 from pathlib import Path
-from typing import Optional
 
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
 
@@ -16,7 +15,7 @@ from .utils.logger import get_logger
 class BrowserManager:
     """Playwright 브라우저 관리 클래스"""
 
-    def __init__(self, config: ScrapingConfig, user_agent: Optional[str] = None) -> None:
+    def __init__(self, config: ScrapingConfig, user_agent: str | None = None) -> None:
         """
         초기화
 
@@ -27,10 +26,10 @@ class BrowserManager:
         self.config = config
         self.saved_user_agent = user_agent  # 세션에서 로드한 User-Agent
         self.logger = get_logger(self.__class__.__name__)
-        self.playwright: Optional[Playwright] = None
-        self.browser: Optional[Browser] = None
-        self.context: Optional[BrowserContext] = None
-        self.page: Optional[Page] = None
+        self.playwright: Playwright | None = None
+        self.browser: Browser | None = None
+        self.context: BrowserContext | None = None
+        self.page: Page | None = None
 
     def start(self) -> None:
         """브라우저 시작"""
@@ -122,19 +121,21 @@ class BrowserManager:
                     proxy_config["password"] = self.config.proxy_password
                     self.logger.info("프록시 인증 정보 설정됨")
 
+            # 로케일 기반 Accept-Language 헤더 생성
+            locale = self.config.browser_locale
+            lang_code = locale.split("-")[0]  # "ja-JP" → "ja"
+            accept_language = f"{locale},{lang_code};q=0.9,en-US;q=0.8,en;q=0.7"
+
             # 컨텍스트 생성 옵션 준비
             context_options = {
                 "viewport": {"width": 1920, "height": 1080},
                 "user_agent": user_agent,
-                "locale": "ko-KR",  # 한국어 로케일
-                "timezone_id": "Asia/Seoul",  # 한국 시간대
+                "locale": locale,
+                "timezone_id": self.config.browser_timezone,
                 "permissions": ["geolocation", "notifications"],  # 권한 설정
                 "color_scheme": "light",  # 다크모드 방지
-                # 실제 사용자처럼 보이게 하는 추가 설정
-                # 주의: CORS 정책을 위반하지 않도록 최소한의 헤더만 설정
-                # Cache-Control과 같은 헤더는 CORS preflight 요청에서 문제를 일으킬 수 있음
                 "extra_http_headers": {
-                    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Accept-Language": accept_language,
                 },
                 # JavaScript 실행 허용
                 "java_script_enabled": True,
@@ -198,7 +199,7 @@ class BrowserManager:
                     }
                 });
 
-                // Languages 설정
+                // Languages 설정 (로케일별 override는 별도 스크립트에서 처리)
                 Object.defineProperty(navigator, 'languages', {
                     get: () => ['ko-KR', 'ko', 'en-US', 'en']
                 });
@@ -304,7 +305,17 @@ class BrowserManager:
             """
             )
 
-            self.logger.info(f"브라우저 시작 완료: {self.config.playwright_browser}")
+            # 로케일에 맞는 navigator.languages 오버라이드
+            nav_languages = [locale, lang_code, "en-US", "en"]
+            nav_languages_js = str(nav_languages).replace("'", '"')
+            self.page.add_init_script(
+                f"Object.defineProperty(navigator, 'languages', {{ get: () => {nav_languages_js} }});"
+            )
+
+            self.logger.info(
+                f"브라우저 시작 완료: {self.config.playwright_browser} "
+                f"(locale={locale}, timezone={self.config.browser_timezone})"
+            )
 
         except Exception as e:
             self.logger.error(f"브라우저 시작 실패: {e}")

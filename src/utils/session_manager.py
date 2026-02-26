@@ -5,7 +5,6 @@
 
 import json
 from pathlib import Path
-from typing import Optional
 
 from playwright.sync_api import BrowserContext, Page
 
@@ -31,7 +30,7 @@ class SessionManager:
         self.session_storage_type = getattr(config, "session_storage_type", "db")
         self.session_file_dir = getattr(config, "session_file_dir", Path("sessions"))
 
-    def load_session(self, account_id: str) -> Optional[dict]:
+    def load_session(self, account_id: str) -> dict | None:
         """
         세션 데이터 로드 (쿠키 + User-Agent)
 
@@ -66,7 +65,7 @@ class SessionManager:
         else:
             self._save_to_file(account_id, cookies, user_agent)
 
-    def verify_session(self, page: Page, account_id: Optional[str] = None) -> bool:
+    def verify_session(self, page: Page, account_id: str | None = None) -> bool:
         """
         세션 유효성 검증
 
@@ -79,8 +78,10 @@ class SessionManager:
         """
         try:
             # 세션 검증 URL 선택
+            # account_id가 이메일 형태면 username 부분만 추출 (cxv963@naver.com → cxv963)
             if account_id:
-                verify_url = f"https://www.instagram.com/{account_id}/"
+                username_part = account_id.split("@")[0] if "@" in account_id else account_id
+                verify_url = f"https://www.instagram.com/{username_part}/"
             else:
                 verify_url = "https://www.instagram.com/accounts/edit/"
 
@@ -123,7 +124,7 @@ class SessionManager:
             "user_agent": user_agent,
         }
 
-    def _load_from_db(self, account_id: str) -> Optional[dict]:
+    def _load_from_db(self, account_id: str) -> dict | None:
         """DB에서 세션 로드"""
         try:
             session_gen = get_db_session()
@@ -166,7 +167,7 @@ class SessionManager:
         except Exception as e:
             logger.error(f"DB 세션 저장 중 오류: {e}")
 
-    def _load_from_file(self, account_id: str) -> Optional[dict]:
+    def _load_from_file(self, account_id: str) -> dict | None:
         """파일에서 세션 로드"""
         try:
             session_file = self.session_file_dir / f"{account_id}.json"
@@ -174,7 +175,7 @@ class SessionManager:
                 logger.info(f"세션 파일 없음: {session_file}")
                 return None
 
-            with open(session_file, "r", encoding="utf-8") as f:
+            with open(session_file, encoding="utf-8") as f:
                 data = json.load(f)
 
             if data.get("is_valid", True):

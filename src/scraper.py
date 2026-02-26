@@ -1,9 +1,7 @@
 import json
 import re
 import time
-import html
 from pathlib import Path
-from typing import Optional
 
 from playwright.sync_api import Page
 
@@ -20,11 +18,11 @@ from .models import ReelData
 from .utils.human_behavior import random_delay, random_mouse_movement, simulate_page_interaction
 from .utils.logger import get_logger
 from .utils.session_manager import SessionManager
-from .utils.wait_utils import safe_fill_input, wait_for_element, wait_for_page_load
+from .utils.wait_utils import safe_fill_input, wait_for_element
 
 # 데이터베이스 관련 import (선택적)
 try:
-    from .database import init_db, get_db_session
+    from .database import get_db_session, init_db
     from .database.repositories import CreatorRepository, ReelRepository, ScrapingSessionRepository
     DB_AVAILABLE = True
 except ImportError:
@@ -43,15 +41,15 @@ class InstagramReelsScraper:
     - 배경음악 정보
     - 링크
     """
-    
+
     # 클래스 레벨 글로벌 캐시: 모든 릴스 데이터를 저장 (Key: shortcode)
     _reels_cache: dict[str, dict] = {}
 
     def __init__(
         self,
-        config: Optional[ScrapingConfig] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
+        config: ScrapingConfig | None = None,
+        username: str | None = None,
+        password: str | None = None,
     ) -> None:
         """
         초기화
@@ -64,7 +62,7 @@ class InstagramReelsScraper:
         self.config = config or ScrapingConfig()
         self.username = username or self.config.instagram_username
         self.password = password or self.config.instagram_password
-        self.browser_manager: Optional[BrowserManager] = None
+        self.browser_manager: BrowserManager | None = None
         self.logger = get_logger(self.__class__.__name__)
         self.session_manager = SessionManager(self.config)
         self._network_listener_registered = False  # 네트워크 리스너 등록 여부
@@ -89,7 +87,7 @@ class InstagramReelsScraper:
 
         self.logger.info("InstagramReelsScraper 초기화 완료")
 
-    def login(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+    def login(self, username: str | None = None, password: str | None = None) -> bool:
         """
         인스타그램에 로그인 (세션 관리 포함)
 
@@ -150,7 +148,7 @@ class InstagramReelsScraper:
                             self.logger.info("✅ 저장된 세션으로 로그인 성공")
                             self.username = username
                             self.password = password
-                            
+
                             # 세션으로 로그인 성공 시 릴스 탭으로 이동
                             try:
                                 self.logger.info("릴스 탭으로 이동 시도 중...")
@@ -158,7 +156,7 @@ class InstagramReelsScraper:
                                 self.logger.info("릴스 탭 이동 완료")
                             except Exception as e:
                                 self.logger.warning(f"릴스 탭 이동 실패: {e}")
-                            
+
                             return True
                         else:
                             self.logger.warning("⚠️ 저장된 세션이 만료됨, 전체 로그인 진행")
@@ -183,7 +181,7 @@ class InstagramReelsScraper:
                 page.wait_for_load_state("domcontentloaded", timeout=10000)
             except Exception:
                 self.logger.debug("페이지 로드 대기 실패 (계속 진행)")
-            
+
             random_delay(1.0, 2.0)  # 사용자처럼 랜덤 대기
 
             # 페이지 상호작용 시뮬레이션 (봇 감지 우회)
@@ -218,10 +216,19 @@ class InstagramReelsScraper:
                             continue
 
                 # 로그인 폼이 나타날 때까지 대기
-                page.wait_for_selector("#loginForm", timeout=10000, state="visible")
-                self.logger.info("로그인 폼 로드 완료")
+                # 신규 버전은 #loginForm 없이 name="email" input을 사용
+                try:
+                    page.wait_for_selector("#loginForm", timeout=5000, state="visible")
+                    self.logger.info("로그인 폼 로드 완료 (구버전 #loginForm)")
+                except Exception:
+                    page.wait_for_selector(
+                        'input[name="email"], input[name="username"]',
+                        timeout=10000,
+                        state="visible",
+                    )
+                    self.logger.info("로그인 폼 로드 완료 (신규 버전 input[name=email])")
             except Exception as e:
-                self.logger.warning(f"loginForm 셀렉터 대기 실패, 계속 진행: {e}")
+                self.logger.warning(f"로그인 폼 셀렉터 대기 실패, 계속 진행: {e}")
 
             # 추가 안정화 대기
             page.wait_for_load_state("domcontentloaded")
@@ -262,10 +269,14 @@ class InstagramReelsScraper:
             self.logger.info("입력 필드와 로그인 버튼을 찾는 중...")
 
             # 사용자명 입력 필드 찾기 및 입력
-            # 제공된 셀렉터: #loginForm > div... > div:nth-child(1) > div > label > input
+            # 신규 버전: name="email", autocomplete="username webauthn"
+            # 구버전: name="username", #loginForm 구조
             username_selectors = [
-                "#loginForm > div > div:nth-child(1) > div > label > input",  # 제공된 셀렉터 (간소화)
-                '#loginForm input[type="text"]',  # 더 간단한 대안
+                'input[name="email"]',                                         # 신규 버전 (name=email)
+                'input[autocomplete="username webauthn"]',                     # 신규 버전 (autocomplete)
+                'input[autocomplete="username"]',                              # 구버전 autocomplete
+                "#loginForm > div > div:nth-child(1) > div > label > input",  # 구버전 셀렉터
+                '#loginForm input[type="text"]',
                 'input[name="username"]',
                 'input[aria-label*="전화번호"]',
                 'input[aria-label*="사용자 이름"]',
@@ -284,12 +295,14 @@ class InstagramReelsScraper:
                 raise LoginError("사용자명 입력에 실패했습니다.")
 
             # 비밀번호 입력 필드 찾기 및 입력
-            # 제공된 셀렉터: #loginForm > div... > div:nth-child(2) > div > label > input
+            # 신규 버전: name="pass"
+            # 구버전: name="password", #loginForm 구조
             password_selectors = [
-                "#loginForm > div > div:nth-child(2) > div > label > input",  # 제공된 셀렉터 (간소화)
-                '#loginForm input[type="password"]',  # 더 간단한 대안
+                'input[name="pass"]',                                          # 신규 버전 (name=pass)
+                'input[type="password"]',                                      # 타입 기반 (공통)
+                "#loginForm > div > div:nth-child(2) > div > label > input",  # 구버전 셀렉터
+                '#loginForm input[type="password"]',
                 'input[name="password"]',
-                'input[type="password"]',
             ]
 
             # 유틸리티 함수로 요소 찾기
@@ -305,14 +318,19 @@ class InstagramReelsScraper:
                 raise LoginError("비밀번호 입력에 실패했습니다.")
 
             # 로그인 버튼 찾기 및 클릭
-            # 제공된 셀렉터: #loginForm > div... > div:nth-child(3)
+            # 신규 버전: <div role="none"> 안에 span 텍스트 "로그인" 구조 (button 태그 없음)
+            # 구버전: #loginForm button[type="submit"]
             login_button_selectors = [
-                "#loginForm > div > div:nth-child(3)",  # 제공된 셀렉터 (간소화)
-                "#loginForm > div > div:nth-child(3) button",  # 버튼이 내부에 있는 경우
-                '#loginForm button[type="submit"]',
+                'div[role="none"]:has(span:text-is("로그인"))',   # 신규 한국어
+                'div[role="none"]:has(span:text-is("ログイン"))', # 신규 일본어
+                'div[role="none"]:has(span:text-is("Log in"))',   # 신규 영어
+                'button:has-text("로그인")',                      # 구버전 한국어
+                'button:has-text("ログイン")',                    # 구버전 일본어
+                'button:has-text("Log in")',                      # 구버전 영어
                 'button[type="submit"]',
-                'button:has-text("Log in")',
-                'button:has-text("로그인")',
+                '#loginForm button[type="submit"]',
+                "#loginForm > div > div:nth-child(3) button",
+                "#loginForm > div > div:nth-child(3)",
             ]
 
             # 유틸리티 함수로 요소 찾기
@@ -362,7 +380,7 @@ class InstagramReelsScraper:
                 # 페이지가 완전히 로드될 때까지 대기
                 page.wait_for_load_state("domcontentloaded", timeout=5000)
                 random_delay(1.0, 2.0)
-                
+
                 current_url = page.url
                 self.logger.info(f"로그인 후 현재 URL: {current_url}")
 
@@ -662,7 +680,7 @@ class InstagramReelsScraper:
         """
         try:
             self.logger.info("홈 탭 찾는 중...")
-            
+
             # 홈 탭 셀렉터
             home_tab_selectors = [
                 'a[href="/"]',
@@ -671,11 +689,11 @@ class InstagramReelsScraper:
                 'nav a[href="/"]',
                 'nav a[href*="/"]',
             ]
-            
+
             home_tab = wait_for_element(
                 page, home_tab_selectors, timeout=10000, description="홈 탭"
             )
-            
+
             if not home_tab:
                 # 홈으로 직접 이동
                 self.logger.info("홈 탭을 찾을 수 없어 URL로 직접 이동합니다...")
@@ -683,19 +701,19 @@ class InstagramReelsScraper:
                 page.wait_for_load_state("domcontentloaded")
                 random_delay(1.0, 2.0)
                 return
-            
+
             # 홈 탭 클릭
             self.logger.info("홈 탭 클릭 중...")
             home_tab.click()
-            
+
             # 페이지 로드 대기
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=5000)
             except Exception:
                 self.logger.debug("홈 탭 로드 대기 실패 (계속 진행)")
-            
+
             random_delay(1.0, 2.0)
-            
+
             # URL 확인
             try:
                 current_url = page.url
@@ -705,7 +723,7 @@ class InstagramReelsScraper:
                     self.logger.warning(f"홈 탭 이동 후 URL 확인 필요: {current_url}")
             except Exception:
                 pass
-                
+
         except Exception as e:
             self.logger.warning(f"홈 탭 이동 실패 (계속 진행): {e}")
             # 실패해도 계속 진행
@@ -786,14 +804,14 @@ class InstagramReelsScraper:
         try:
             self.logger.info("릴스 페이지 로딩 대기 중...")
             time.sleep(3)  # 초기 로딩 대기
-            
+
             # 릴스 컨테이너가 나타날 때까지 대기
             reels_container_selectors = [
                 'section > main > div',
                 'div.xvc5jky',
                 'main > div',
             ]
-            
+
             for selector in reels_container_selectors:
                 try:
                     container = page.locator(selector).first
@@ -821,7 +839,7 @@ class InstagramReelsScraper:
         except Exception as e:
             self.logger.warning(f"릴스 페이지 로딩 대기 중 오류 (계속 진행): {e}")
 
-    def _get_current_reel_instancekey(self, page: Page) -> Optional[str]:
+    def _get_current_reel_instancekey(self, page: Page) -> str | None:
         """
         (중복 체크용 백업) 현재 보이는 릴스의 data-instancekey 값 추출
 
@@ -870,7 +888,7 @@ class InstagramReelsScraper:
                 return videos.first
 
             center_y = viewport["height"] / 2
-            closest_idx: Optional[int] = None
+            closest_idx: int | None = None
             closest_dist = float("inf")
 
             for i in range(min(20, count)):  # 너무 많이 보면 느려지니 최대 20개까지만
@@ -942,10 +960,10 @@ class InstagramReelsScraper:
             # Playwright의 bounding_box()는 페이지 전체 기준 좌표(scrollTop 포함)를 반환하므로,
             # 스크롤된 상태에서는 viewport_height/2 와 비교하면 안 된다.
             # 대신 JS evaluate를 통해 뷰포트 기준 좌표(top)를 직접 가져온다.
-            
+
             closest_idx = None
             closest_distance = float("inf")
-            
+
             # 뷰포트 중앙 Y 좌표
             viewport_center_y = viewport["height"] / 2
 
@@ -954,13 +972,13 @@ class InstagramReelsScraper:
                 try:
                     # 뷰포트 기준 좌표(top, height) 가져오기
                     rect = div.evaluate("el => { const r = el.getBoundingClientRect(); return { top: r.top, height: r.height, bottom: r.bottom }; }")
-                    
+
                     # 요소의 수직 중앙점 (뷰포트 기준)
                     element_center_y = rect["top"] + rect["height"] / 2
-                    
+
                     # 뷰포트 중앙과의 거리
                     distance = abs(element_center_y - viewport_center_y)
-                    
+
                     # 화면에 보이는 요소만 대상 (적어도 일부라도 보여야 함)
                     if rect["bottom"] > 0 and rect["top"] < viewport["height"]:
                         if distance < closest_distance:
@@ -979,7 +997,7 @@ class InstagramReelsScraper:
 
         return None
 
-    def _extract_current_reel_data(self, page: Page) -> Optional[ReelData]:
+    def _extract_current_reel_data(self, page: Page) -> ReelData | None:
         """
         현재 보이는 릴스의 정보를 수집
 
@@ -991,11 +1009,11 @@ class InstagramReelsScraper:
         """
         try:
             self.logger.info("현재 릴스 정보 수집 중...")
-            
+
             # 현재 URL 확인 (디버깅용)
             current_url = page.url
             self.logger.debug(f"현재 URL: {current_url}")
-            
+
             reel_data = ReelData(
                 thumbnail=None,
                 likes=None,
@@ -1097,7 +1115,7 @@ class InstagramReelsScraper:
                 self.logger.info(f"{label}: 버튼을 찾지 못함 (scope_expand_attempts=5)")
                 return None, 5
 
-            def _parse_like_count(text: str) -> Optional[int]:
+            def _parse_like_count(text: str) -> int | None:
                 t = (text or "").strip().replace(" ", "")
                 if not t:
                     return None
@@ -1115,7 +1133,7 @@ class InstagramReelsScraper:
                 except Exception:
                     return None
 
-            def _extract_count_from_button(button, kind: str) -> tuple[Optional[int], int, int]:
+            def _extract_count_from_button(button, kind: str) -> tuple[int | None, int, int]:
                 spans = button.locator("span.html-span.x1vvkbs, span.x1vvkbs").all()
                 if not spans:
                     spans = button.locator("span").all()
@@ -1140,7 +1158,7 @@ class InstagramReelsScraper:
                 return None, scanned, total
 
             def _find_action_button_by_proximity(
-                button_xpath: str, label: str, svg_xpath: Optional[str] = None
+                button_xpath: str, label: str, svg_xpath: str | None = None
             ):
                 """
                 reels 페이지에서 액션바(좋아요/댓글)가 video 카드 밖(오른쪽 컬럼)에 렌더링되는 레이아웃이 있음.
@@ -1396,7 +1414,7 @@ class InstagramReelsScraper:
                                         self.logger.info(f"크리에이터 (텍스트): {reel_data.author}")
                 except Exception:
                     pass
-                
+
                 # 방법 2: 프로필 이미지 근처의 span[dir="auto"]에서 추출
                 if not reel_data.author:
                     try:
@@ -1419,7 +1437,7 @@ class InstagramReelsScraper:
                                 continue
                     except Exception:
                         pass
-                        
+
             except Exception as e:
                 self.logger.debug(f"크리에이터 이름 추출 실패: {e}")
 
@@ -1435,7 +1453,7 @@ class InstagramReelsScraper:
                             self.logger.info(f"프로필 사진: {reel_data.creator_profile_image[:50]}...")
                 except Exception:
                     pass
-                
+
                 # 방법 2: 백업 - 프로필 링크 내부의 이미지
                 if not reel_data.creator_profile_image:
                     try:
@@ -1449,7 +1467,7 @@ class InstagramReelsScraper:
                                     self.logger.info(f"프로필 사진 (백업): {reel_data.creator_profile_image[:50]}...")
                     except Exception:
                         pass
-                        
+
             except Exception as e:
                 self.logger.debug(f"프로필 사진 추출 실패: {e}")
 
@@ -1463,8 +1481,8 @@ class InstagramReelsScraper:
                             title_text = span.text_content() or ""
                             title_text = title_text.strip()
                             # 제목 조건: 충분히 긴 텍스트, 사용자명/음악과 다름
-                            if (len(title_text) > 5 and len(title_text) < 500 and 
-                                title_text != reel_data.author and 
+                            if (len(title_text) > 5 and len(title_text) < 500 and
+                                title_text != reel_data.author and
                                 (not reel_data.music or title_text != reel_data.music) and
                                 not title_text.startswith('@') and
                                 not re.match(r'^[\d,]+$', title_text) and
@@ -1476,7 +1494,7 @@ class InstagramReelsScraper:
                             continue
                 except Exception:
                     pass
-                
+
                 # 방법 2: span[dir="auto"] 중에서 긴 텍스트 찾기 (백업)
                 if not reel_data.title:
                     try:
@@ -1485,8 +1503,8 @@ class InstagramReelsScraper:
                             try:
                                 title_text = span.text_content() or ""
                                 title_text = title_text.strip()
-                                if (len(title_text) > 10 and len(title_text) < 500 and 
-                                    title_text != reel_data.author and 
+                                if (len(title_text) > 10 and len(title_text) < 500 and
+                                    title_text != reel_data.author and
                                     (not reel_data.music or title_text != reel_data.music) and
                                     not title_text.startswith('@') and
                                     not re.match(r'^[\d,]+$', title_text)):
@@ -1497,7 +1515,7 @@ class InstagramReelsScraper:
                                 continue
                     except Exception:
                         pass
-                        
+
             except Exception as e:
                 self.logger.debug(f"제목 추출 실패: {e}")
 
@@ -1583,7 +1601,7 @@ class InstagramReelsScraper:
                                     break
                             except Exception:
                                 continue
-                        
+
                         # 백업: 링크 내부의 모든 텍스트
                         if not reel_data.music:
                             music_text = audio_link.text_content() or ""
@@ -1593,7 +1611,7 @@ class InstagramReelsScraper:
                                 self.logger.info(f"배경음악 (백업): {reel_data.music}")
                 except Exception:
                     pass
-                
+
                 # 방법 2: 텍스트에 "오리지널 오디오" 또는 "· 오리지널"이 포함된 요소 찾기
                 if not reel_data.music:
                     try:
@@ -1612,7 +1630,7 @@ class InstagramReelsScraper:
                                 continue
                     except Exception:
                         pass
-                        
+
             except Exception as e:
                 self.logger.debug(f"배경음악 추출 실패: {e}")
 
@@ -1638,18 +1656,18 @@ class InstagramReelsScraper:
                     if page:
                         self._register_global_network_listener(page)
                         self._network_listener_registered = True
-                
+
                 # 2. 현재 URL에서 shortcode 추출
-                target_code: Optional[str] = None
+                target_code: str | None = None
                 if reel_data.link:
                     match = re.search(r"/reels?/([^/?]+)", str(reel_data.link))
                     if match:
                         target_code = match.group(1)
-                
+
                 # 3. 캐시에서 데이터 조회 (Retry 로직 포함)
                 needs_reel_id = reel_data.link and "/reels/" in reel_data.link and reel_data.link.rstrip("/").endswith("/reels")
                 needs_counts = reel_data.likes is None or reel_data.comments is None
-                
+
                 if needs_counts or needs_reel_id:
                     cached_data = None
                     # 최대 10번 시도 (5초)
@@ -1660,7 +1678,7 @@ class InstagramReelsScraper:
                             break
                         if attempt < 9:
                             time.sleep(0.5)  # 0.5초 대기
-                    
+
                     if cached_data:
                         if reel_data.likes is None and cached_data.get("likes") is not None:
                             reel_data.likes = cached_data["likes"]
@@ -1673,7 +1691,7 @@ class InstagramReelsScraper:
                         if needs_reel_id and cached_data.get("code"):
                             reel_data.link = f"https://www.instagram.com/reels/{cached_data['code']}/"
                             self.logger.info(f"링크 업데이트 (캐시에서 reel_id 추출): {reel_data.link}")
-                        
+
                         self.logger.info(
                             f"counts(cache): "
                             f"likes={reel_data.likes}, comments={reel_data.comments}, "
@@ -1706,7 +1724,7 @@ class InstagramReelsScraper:
 
             try:
                 json_body = response.json()
-                
+
                 # 원본 네트워크 데이터 저장 (디버깅용)
                 try:
                     import json as json_module
@@ -1726,7 +1744,7 @@ class InstagramReelsScraper:
                     self.logger.debug(f"💾 네트워크 응답 저장: {filepath}")
                 except Exception:
                     pass
-                
+
                 # 캐시에 저장
                 self._parse_and_cache_reels(json_body)
             except Exception:
@@ -1756,7 +1774,7 @@ class InstagramReelsScraper:
             ]
 
             edges = []
-            
+
             # 1. 알려진 루트 키 탐색
             for root in possible_roots:
                 if root in data_inner:
@@ -1767,7 +1785,7 @@ class InstagramReelsScraper:
                     # 단일 객체로 들어오는 경우 (shortcode_media 등)
                     elif "shortcode" in container or "code" in container:
                         edges.append({"node": {"media": container}})
-            
+
             # 2. 만약 알려진 키가 없으면, 'edges'를 가진 모든 하위 딕셔너리를 검색 (비상 대책)
             if not edges:
                 for key, value in data_inner.items():
@@ -1779,13 +1797,13 @@ class InstagramReelsScraper:
                 # node 밑에 media가 있을 수도, node가 바로 media일 수도 있음
                 node = edge.get("node", {})
                 media = node.get("media") or node  # media 키가 없으면 node 자체를 사용
-                
+
                 # 광고나 잘못된 데이터 제외
                 if not media or ("code" not in media and "shortcode" not in media):
                     continue
 
                 shortcode = media.get("code") or media.get("shortcode")
-                
+
                 if shortcode:
                     # 좋아요/댓글 수 추출 (없는 경우 None 처리)
                     like_count = media.get("like_count")
@@ -1797,12 +1815,12 @@ class InstagramReelsScraper:
                     comment_count = media.get("comment_count")
                     if comment_count is None:
                         comment_count = media.get("edge_media_to_comment", {}).get("count")
-                    
+
                     # 조회수 추출
                     views = media.get("video_view_count") or media.get("view_count") or media.get("play_count")
                     if views is None:
                         views = media.get("edge_media_preview", {}).get("video_view_count")
-                    
+
                     # 게시일자 추출
                     posted_date = None
                     if "taken_at_timestamp" in media and isinstance(media["taken_at_timestamp"], (int, float)):
@@ -1849,7 +1867,7 @@ class InstagramReelsScraper:
             # 이동 전 URL 저장 (JS로 직접 가져오기)
             initial_url = page.evaluate("window.location.href")
             self.logger.debug(f"이동 전 URL: {initial_url}")
-            
+
             # 방법 1: 마우스 휠로 화면 전체 높이만큼 스크롤 (1번만 시도)
             try:
                 viewport = page.viewport_size
@@ -1882,7 +1900,7 @@ class InstagramReelsScraper:
                     self.logger.debug("스크롤 후 변화 없음")
             except Exception as e:
                 self.logger.debug(f"마우스 휠 스크롤 실패: {e}")
-            
+
             # 방법 1이 실패했을 때만 다른 방법 시도
             # 방법 2: 화살표 아래 키 1번만 누르기
             try:
@@ -1904,7 +1922,7 @@ class InstagramReelsScraper:
                     return True
             except Exception as e:
                 self.logger.debug(f"화살표 키 이동 실패: {e}")
-            
+
             self.logger.warning("다음 릴스로 이동하지 못했습니다")
             return False
 
@@ -1955,7 +1973,7 @@ class InstagramReelsScraper:
 
             page = self.browser_manager.get_page()
             self.logger.info("릴스 수집 시작...")
-            
+
             # 글로벌 네트워크 리스너 등록 (한 번만)
             if not self._network_listener_registered:
                 self._register_global_network_listener(page)
@@ -1968,10 +1986,12 @@ class InstagramReelsScraper:
             collected_reel_ids: set[str] = set()  # 중복 체크용 (URL 기반 ID)
             collected_thumbnails: set[str] = set()  # 썸네일 중복 체크용
             save_interval = 10  # 10개마다 저장
-            consecutive_failures = 0  # 연속 실패 횟수
-            max_failures = 5  # 최대 연속 실패 허용 횟수
-            last_poster: Optional[str] = None  # 릴스 전환 감지용 (DOM/카운트 갱신 안정화)
-            
+            consecutive_failures = 0  # 연속 이동 실패 횟수
+            max_failures = 5  # 최대 연속 이동 실패 허용 횟수
+            consecutive_duplicates = 0  # 연속 중복 감지 횟수
+            max_consecutive_duplicates = 10  # 연속 중복 N개 이상이면 피드 루프로 판단, 종료
+            last_poster: str | None = None  # 릴스 전환 감지용 (DOM/카운트 갱신 안정화)
+
             while True:
                 try:
                     # 릴스 전환 직후 DOM이 재사용/지연 갱신되는 경우가 있어,
@@ -1991,7 +2011,7 @@ class InstagramReelsScraper:
 
                     # 현재 릴스 정보 수집
                     reel_data = self._extract_current_reel_data(page)
-                    
+
                     if reel_data:
                         # 다음 루프를 위해 마지막 poster 갱신
                         try:
@@ -2005,9 +2025,9 @@ class InstagramReelsScraper:
                         # 중복 체크 (여러 방법 사용)
                         is_duplicate = False
                         duplicate_reason = None
-                        
+
                         # 방법 1: ReelData.link 또는 현재 페이지 URL에서 /reels/<id>/ 기준 중복 체크
-                        reel_id: Optional[str] = None
+                        reel_id: str | None = None
                         url_candidates: list[tuple[str, str]] = []
 
                         # 우선순위 1: reel_data.link (가능하면 이 값을 신뢰)
@@ -2040,44 +2060,53 @@ class InstagramReelsScraper:
 
                             # 한 번 유효 ID를 처리했으면 더 이상 다른 소스는 볼 필요 없음
                             break
-                        
+
                         # 방법 3: 백업 - 썸네일 URL로 체크
-                        if not is_duplicate and reel_data.thumbnail:
+                        # reel_id가 정상 추출된 경우에는 썸네일 체크 생략
+                        # (t51.827 등 공통 UI 이미지가 잘못 추출되어 false positive 발생 방지)
+                        if not is_duplicate and not reel_id and reel_data.thumbnail:
                             thumbnail_key = reel_data.thumbnail
                             if thumbnail_key in collected_thumbnails:
                                 is_duplicate = True
                                 duplicate_reason = f"썸네일: {reel_data.thumbnail[:50]}..."
                             else:
                                 collected_thumbnails.add(thumbnail_key)
-                        
+
                         if is_duplicate:
                             self.logger.warning(f"중복 릴스 감지 ({duplicate_reason})")
-                        
+
                         # 중복이 아닌 경우에만 추가
                         if not is_duplicate:
                             collected_reels.append(reel_data)
-                            consecutive_failures = 0  # 성공 시 실패 카운터 리셋
+                            consecutive_failures = 0
+                            consecutive_duplicates = 0  # 신규 릴스 수집 시 중복 카운터 리셋
                             self.logger.info(f"수집된 릴스 수: {len(collected_reels)} (작성자: {reel_data.author})")
-                            # 수집된 데이터 출력 (보기 좋게)
                             self._print_reel_summary(reel_data, len(collected_reels))
                         else:
-                            self.logger.info("중복 릴스 건너뜀")
-                        
+                            consecutive_duplicates += 1
+                            self.logger.info(f"중복 릴스 건너뜀 ({consecutive_duplicates}/{max_consecutive_duplicates})")
+                            if consecutive_duplicates >= max_consecutive_duplicates:
+                                self.logger.warning(
+                                    f"연속 {max_consecutive_duplicates}개 중복 감지 — "
+                                    "인스타그램 피드가 루프됨, 수집 종료."
+                                )
+                                break
+
                         # 주기적으로 저장
                         if len(collected_reels) >= save_interval:
                             self.logger.info(f"{save_interval}개 수집 완료. 임시 저장 중...")
                             self.save_to_json(collected_reels)
                             save_interval += 10
-                    
+
                     # 다음 릴스로 이동
                     if not self._move_to_next_reel(page):
                         consecutive_failures += 1
                         self.logger.warning(f"다음 릴스로 이동하지 못했습니다 ({consecutive_failures}/{max_failures}). 잠시 대기 후 재시도...")
-                        
+
                         if consecutive_failures >= max_failures:
                             self.logger.error(f"연속 {max_failures}회 이동 실패. 수집 중단.")
                             break
-                        
+
                         time.sleep(1)  # 대기 시간 최적화
                     else:
                         consecutive_failures = 0  # 이동 성공 시 실패 카운터 리셋
@@ -2102,9 +2131,9 @@ class InstagramReelsScraper:
 
     def scrape_reels(
         self,
-        hashtag: Optional[str] = None,
-        url: Optional[str] = None,
-        max_reels: Optional[int] = None,
+        hashtag: str | None = None,
+        url: str | None = None,
+        max_reels: int | None = None,
     ) -> list[ReelData]:
         """
         릴스 스크래핑
@@ -2198,7 +2227,7 @@ class InstagramReelsScraper:
             self.logger.error(f"데이터 추출 실패: {e}")
             raise DataExtractionError(f"데이터 추출에 실패했습니다: {e}") from e
 
-    def save_to_json(self, data: list[ReelData], filename: Optional[str] = None) -> Path:
+    def save_to_json(self, data: list[ReelData], filename: str | None = None) -> Path:
         """
         데이터를 JSON 파일로 저장
 
@@ -2229,20 +2258,20 @@ class InstagramReelsScraper:
                 json.dump(data_dict, f, ensure_ascii=False, indent=2)
 
             self.logger.info(f"데이터 저장 완료: {len(data)}개 항목")
-            
+
             # DB가 활성화되어 있으면 DB에도 저장
             if self._db_enabled:
                 self.logger.info("DB 저장 시작...")
                 self._save_to_db(data)
             else:
                 self.logger.debug(f"DB 저장 건너뜀 (DB 활성화 여부: {self._db_enabled}, config.db_enabled: {self.config.db_enabled})")
-            
+
             return filepath
         except Exception as e:
             self.logger.error(f"데이터 저장 실패: {e}")
             raise InstagramScraperError(f"데이터 저장에 실패했습니다: {e}") from e
 
-    def save_to_csv(self, data: list[ReelData], filename: Optional[str] = None) -> Path:
+    def save_to_csv(self, data: list[ReelData], filename: str | None = None) -> Path:
         """
         데이터를 CSV 파일로 저장
 

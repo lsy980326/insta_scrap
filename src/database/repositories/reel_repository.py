@@ -5,7 +5,6 @@
 
 import re
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -17,7 +16,7 @@ from ..models import Reel, ReelMetric
 logger = get_logger(__name__)
 
 
-def extract_reel_id(link: str) -> Optional[str]:
+def extract_reel_id(link: str) -> str | None:
     """
     릴스 링크에서 reel_id 추출
 
@@ -49,7 +48,7 @@ class ReelRepository:
         """
         self.session = session
 
-    def find_by_reel_id(self, reel_id: str) -> Optional[Reel]:
+    def find_by_reel_id(self, reel_id: str) -> Reel | None:
         """
         reel_id로 릴스 조회
 
@@ -61,7 +60,7 @@ class ReelRepository:
         """
         return self.session.query(Reel).filter(Reel.reel_id == reel_id).first()
 
-    def find_by_link(self, link: str) -> Optional[Reel]:
+    def find_by_link(self, link: str) -> Reel | None:
         """
         링크로 릴스 조회
 
@@ -151,9 +150,9 @@ class ReelRepository:
     def add_metric(
         self,
         reel: Reel,
-        likes: Optional[int] = None,
-        comments: Optional[int] = None,
-        views: Optional[int] = None,
+        likes: int | None = None,
+        comments: int | None = None,
+        views: int | None = None,
     ) -> ReelMetric:
         """
         릴스 통계 정보 추가 (시계열 추적)
@@ -177,7 +176,7 @@ class ReelRepository:
         self.session.flush()
         return metric
 
-    def get_latest_metric(self, reel: Reel) -> Optional[ReelMetric]:
+    def get_latest_metric(self, reel: Reel) -> ReelMetric | None:
         """
         릴스의 최신 통계 정보 조회
 

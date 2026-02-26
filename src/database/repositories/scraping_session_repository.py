@@ -3,12 +3,11 @@
 수집 세션 추적 데이터 접근 로직
 """
 
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..models import ScrapingSession
 from ...utils.logger import get_logger
+from ..models import ScrapingSession
 
 logger = get_logger(__name__)
 
@@ -49,9 +48,9 @@ class ScrapingSessionRepository:
     def update_session(
         self,
         session: ScrapingSession,
-        status: Optional[str] = None,
-        total_reels: Optional[int] = None,
-        error_message: Optional[str] = None,
+        status: str | None = None,
+        total_reels: int | None = None,
+        error_message: str | None = None,
     ) -> ScrapingSession:
         """
         수집 세션 업데이트
@@ -80,7 +79,7 @@ class ScrapingSessionRepository:
         self.session.flush()
         return session
 
-    def find_by_id(self, session_id: int) -> Optional[ScrapingSession]:
+    def find_by_id(self, session_id: int) -> ScrapingSession | None:
         """
         ID로 세션 조회
 

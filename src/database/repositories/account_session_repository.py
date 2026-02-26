@@ -4,12 +4,11 @@
 """
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..models import AccountSession
 from ...utils.logger import get_logger
+from ..models import AccountSession
 
 logger = get_logger(__name__)
 
@@ -26,7 +25,7 @@ class AccountSessionRepository:
         """
         self.session = session
 
-    def find_by_account_id(self, account_id: str) -> Optional[AccountSession]:
+    def find_by_account_id(self, account_id: str) -> AccountSession | None:
         """
         계정 ID로 세션 조회
 

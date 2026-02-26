@@ -1,20 +1,14 @@
 """
 프로젝트 루트에서 실행 가능한 메인 파일
 
-실행 방법 (macOS):
-1. Poetry 사용 (권장): 
-   poetry run python3 main.py
-   
-2. 가상 환경 활성화 후:
-   poetry shell
-   python3 main.py
-   
-3. 직접 실행 (가상 환경 필요):
-   python3 main.py
-
-참고: macOS에서는 'python' 대신 'python3'를 사용하세요.
+실행 방법:
+  poetry run python main.py                # .env 기본값 사용
+  poetry run python main.py --profile kr   # 한국 계정 (accounts.yaml)
+  poetry run python main.py --profile jp   # 일본 계정 (accounts.yaml)
+  poetry run python main.py --list-profiles
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -23,37 +17,52 @@ project_root = Path(__file__).parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# Poetry 가상 환경 확인 및 안내
 try:
     from src.config import load_config
+    from src.profile_loader import list_profiles, load_profile
+    from src.scraper import InstagramReelsScraper
+    from src.utils.logger import get_logger, setup_logger
 except ImportError as e:
     print("=" * 60)
     print("오류: 필요한 모듈을 찾을 수 없습니다.")
-    print("=" * 60)
-    print("\n해결 방법:")
-    print("1. Poetry를 사용하여 실행하세요:")
-    print("   poetry run python3 main.py")
-    print("\n2. 또는 가상 환경을 활성화한 후 실행하세요:")
-    print("   poetry shell")
-    print("   python3 main.py")
-    print("\n3. 또는 Poetry 가상 환경에 직접 접근:")
-    print("   python -m poetry env info --path")
-    print("   (출력된 경로의 Scripts\\python.exe main.py)")
-    print("\n원본 오류:", str(e))
+    print("해결: poetry run python main.py")
+    print("원본 오류:", str(e))
     print("=" * 60)
     sys.exit(1)
 
-from src.config import load_config
-from src.scraper import InstagramReelsScraper
-from src.utils.logger import setup_logger, get_logger
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Instagram Reels Scraper")
+    parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help="accounts.yaml 프로파일 이름 (예: kr, jp). 없으면 .env 기본값 사용.",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="사용 가능한 프로파일 목록 출력 후 종료",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
-    """
-    메인 함수
-    """
-    # 설정 로드
-    config = load_config()
+    args = parse_args()
+
+    # 프로파일 목록 출력
+    if args.list_profiles:
+        profiles = list_profiles()
+        print("사용 가능한 프로파일:")
+        for p in profiles:
+            print(f"  - {p}")
+        return
+
+    # 설정 로드: --profile 있으면 accounts.yaml, 없으면 .env
+    if args.profile:
+        config = load_profile(args.profile)
+    else:
+        config = load_config()
 
     # 로거 설정
     setup_logger(
@@ -67,6 +76,11 @@ def main() -> None:
     logger.info("Instagram Reels Scraper")
     logger.info("=" * 50)
 
+    if args.profile:
+        logger.info(f"프로파일: {args.profile} "
+                    f"(locale={config.browser_locale}, tz={config.browser_timezone})")
+    logger.info(f"계정: {config.instagram_username}")
+
     try:
         # 스크래퍼 인스턴스 생성
         scraper = InstagramReelsScraper(config=config)
@@ -76,7 +90,7 @@ def main() -> None:
             logger.info("로그인 정보가 설정되어 있습니다. 로그인을 시도합니다...")
             scraper.login()
             logger.info("로그인 성공! 릴스 탭까지 이동 완료.")
-            
+
             # 릴스 수집 시작
             logger.info("릴스 수집을 시작합니다...")
             logger.info("수집을 중단하려면 Ctrl+C를 누르세요.")

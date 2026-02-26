@@ -3,7 +3,6 @@
 웹 페이지 로딩 및 요소 대기를 위한 유틸리티 함수
 """
 
-from typing import Optional
 
 from playwright.sync_api import Locator, Page
 
@@ -36,7 +35,7 @@ def wait_for_element(
     timeout: int = 5000,
     state: str = "visible",  # type: ignore[assignment]
     description: str = "요소",
-) -> Optional[Locator]:
+) -> Locator | None:
     """
     여러 셀렉터 중 하나가 나타날 때까지 대기
 

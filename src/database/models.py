@@ -3,14 +3,21 @@
 SQLAlchemy를 사용한 테이블 모델 정의
 """
 
-from datetime import datetime
-from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, Column, ForeignKey, Integer, JSON, String, Text, TIMESTAMP
+from sqlalchemy import (
+    JSON,
+    TIMESTAMP,
+    BigInteger,
+    Boolean,
+    Column,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from sqlalchemy.orm import foreign
 
 Base = declarative_base()
 

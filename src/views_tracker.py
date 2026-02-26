@@ -8,14 +8,13 @@ import re
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
 
 from playwright.sync_api import Page
 
 from .browser import BrowserManager
 from .config import ScrapingConfig
 from .database import get_db_session, init_db
-from .database.repositories import ReelRepository, ScrapingSessionRepository
+from .database.repositories import ReelRepository
 from .exceptions import LoginError, ScrapingError
 from .models import ReelData
 from .utils.human_behavior import random_delay, simulate_page_interaction
@@ -31,7 +30,7 @@ class ReelViewsTracker:
     수집된 릴스 데이터를 기반으로 크리에이터의 reels 페이지에서 조회수를 추출합니다.
     """
 
-    def __init__(self, config: Optional[ScrapingConfig] = None) -> None:
+    def __init__(self, config: ScrapingConfig | None = None) -> None:
         """
         초기화
 
@@ -39,7 +38,7 @@ class ReelViewsTracker:
             config: 스크래핑 설정 객체
         """
         self.config = config or ScrapingConfig()
-        self.browser_manager: Optional[BrowserManager] = None
+        self.browser_manager: BrowserManager | None = None
         self.logger = get_logger(self.__class__.__name__)
         self.session_manager = SessionManager(self.config)
         self._is_logged_in = False
@@ -58,7 +57,7 @@ class ReelViewsTracker:
 
         self.logger.info("ReelViewsTracker 초기화 완료")
 
-    def login(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+    def login(self, username: str | None = None, password: str | None = None) -> bool:
         """
         인스타그램에 로그인 (세션 관리 포함)
 
@@ -299,7 +298,7 @@ class ReelViewsTracker:
 
             # 로그인 후 팝업 처리
             self._handle_post_login_popup(page)
-            
+
             # 로그인 상태 최종 확인
             try:
                 final_url = page.url
@@ -457,7 +456,7 @@ class ReelViewsTracker:
             self.logger.debug(f"팝업 확인 중 오류 (무시): {e}")
             return False
 
-    def _parse_number(self, text: str) -> Optional[int]:
+    def _parse_number(self, text: str) -> int | None:
         """
         텍스트에서 숫자 추출 (예: "502.9만" -> 5029000, "5647" -> 5647)
 
@@ -503,7 +502,7 @@ class ReelViewsTracker:
 
         return None
 
-    def _extract_reel_id_from_link(self, link: str) -> Optional[str]:
+    def _extract_reel_id_from_link(self, link: str) -> str | None:
         """
         릴스 링크에서 릴스 ID 추출
 
@@ -524,7 +523,7 @@ class ReelViewsTracker:
 
     def _extract_views_from_creator_reels_page(
         self, page: Page, creator_name: str, target_reel_ids: set[str]
-    ) -> dict[str, dict[str, Optional[int]]]:
+    ) -> dict[str, dict[str, int | None]]:
         """
         크리에이터의 reels 페이지에서 조회수, 좋아요 수, 댓글 수 추출
 
@@ -536,14 +535,14 @@ class ReelViewsTracker:
         Returns:
             {릴스ID: {views: 조회수, likes: 좋아요수, comments: 댓글수}} 딕셔너리
         """
-        metrics_dict: dict[str, dict[str, Optional[int]]] = {}
+        metrics_dict: dict[str, dict[str, int | None]] = {}
 
         try:
             self.logger.info(f"크리에이터 '{creator_name}'의 reels 페이지 접근 중...")
 
             # 크리에이터의 reels 페이지로 이동
             reels_url = f"https://www.instagram.com/{creator_name}/reels/"
-            
+
             # 현재 URL이 메인 페이지가 아니면 먼저 메인 페이지로 이동하여 세션 유지
             try:
                 current_url = page.url
@@ -554,7 +553,7 @@ class ReelViewsTracker:
                     random_delay(0.3, 0.7)
             except Exception:
                 pass
-            
+
             page.goto(
                 reels_url,
                 wait_until="domcontentloaded",
@@ -565,7 +564,7 @@ class ReelViewsTracker:
             # 페이지 로드 대기 (최적화: 대기 시간 단축)
             time.sleep(1)
             random_delay(0.5, 1.0)
-            
+
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=3000)
             except Exception:
@@ -583,12 +582,12 @@ class ReelViewsTracker:
             self.logger.info(f"크리에이터 '{creator_name}'의 reels 페이지에서 조회수 추출 중...")
 
             max_scrolls = 5  # 최대 스크롤 횟수
-            
+
             # 스크롤하면서 조회수 추출 시도
             for scroll_attempt in range(max_scrolls + 1):
                 # 모든 릴스 링크 찾기
                 reel_links = page.locator(f'a[href^="/{creator_name}/reel/"]').all()
-                
+
                 if scroll_attempt == 0:
                     self.logger.info(f"크리에이터 '{creator_name}'의 릴스 링크 {len(reel_links)}개 발견 (초기)")
                 else:
@@ -709,22 +708,22 @@ class ReelViewsTracker:
                                         'likes': None,
                                         'comments': None
                                     }
-                                    
+
                                     if extracted_data.get('views'):
                                         views_value = self._parse_number(extracted_data['views'])
                                     if views_value and views_value > 0:
                                             metrics['views'] = views_value
-                                    
+
                                     if extracted_data.get('likes'):
                                         likes_value = self._parse_number(extracted_data['likes'])
                                         if likes_value and likes_value > 0:
                                             metrics['likes'] = likes_value
-                                    
+
                                     if extracted_data.get('comments'):
                                         comments_value = self._parse_number(extracted_data['comments'])
                                         if comments_value and comments_value >= 0:  # 댓글은 0도 유효
                                             metrics['comments'] = comments_value
-                                    
+
                                     # 하나라도 찾았으면 저장
                                     if metrics['views'] or metrics['likes'] or metrics['comments'] is not None:
                                         if reel_id not in metrics_dict:
@@ -737,7 +736,7 @@ class ReelViewsTracker:
                                             self.logger.info(
                                                 f"릴스 ID '{reel_id}' - {', '.join(log_items)}"
                                             )
-                                        
+
                                         if len(metrics_dict) >= len(target_reel_ids):
                                             break
                                 else:
@@ -752,19 +751,19 @@ class ReelViewsTracker:
                     except Exception as e:
                         self.logger.debug(f"릴스 링크 처리 중 오류: {e}")
                         continue
-                
+
                 # 모든 목표 릴스 ID를 찾았으면 스크롤 루프 종료
                 if len(metrics_dict) >= len(target_reel_ids):
                     self.logger.info(f"모든 목표 릴스의 통계를 찾았습니다. (총 {len(metrics_dict)}개)")
                     break
-                
+
                 # 스크롤이 필요하고 아직 목표를 찾지 못했으면 스크롤 시도
                 if len(metrics_dict) < len(target_reel_ids) and scroll_attempt < max_scrolls:
                     self.logger.info(
                         f"통계 미발견 릴스: {len(target_reel_ids) - len(metrics_dict)}개. "
                         f"스크롤 다운 시도 ({scroll_attempt + 1}/{max_scrolls})..."
                     )
-                    
+
                     try:
                         viewport = page.viewport_size
                         if viewport:
@@ -793,7 +792,7 @@ class ReelViewsTracker:
 
         return metrics_dict
 
-    def track_views(self, input_file: Path, output_file: Optional[Path] = None) -> Path:
+    def track_views(self, input_file: Path, output_file: Path | None = None) -> Path:
         """
         수집된 릴스 데이터에 조회수 추가
 
@@ -810,7 +809,7 @@ class ReelViewsTracker:
         try:
             # 입력 파일 읽기
             self.logger.info(f"입력 파일 로드: {input_file}")
-            with open(input_file, "r", encoding="utf-8") as f:
+            with open(input_file, encoding="utf-8") as f:
                 data = json.load(f)
 
             # ReelData 리스트로 변환
@@ -822,7 +821,7 @@ class ReelViewsTracker:
             if self.browser_manager is None:
                 self.browser_manager = BrowserManager(self.config)
                 self.browser_manager.start()
-                
+
                 # 로그인 정보가 있으면 자동 로그인 시도
                 if self.config.instagram_username and self.config.instagram_password:
                     self.logger.info("로그인 정보가 있습니다. 로그인을 시도합니다...")
@@ -850,7 +849,7 @@ class ReelViewsTracker:
             # 각 크리에이터별로 조회수 추출
             total_updated = 0
             failed_creators = []
-            
+
             for creator_name, reel_list in creator_reels.items():
                 try:
                     # 해당 크리에이터의 릴스 ID 수집
@@ -886,11 +885,11 @@ class ReelViewsTracker:
                             # 댓글 수 업데이트
                             if metrics.get('comments') is not None:
                                 reels[idx].comments = metrics['comments']
-                            
+
                             # 하나라도 업데이트되었으면 카운트
                             if metrics.get('views') or metrics.get('likes') or metrics.get('comments') is not None:
                                 total_updated += 1
-                            
+
                             # DB 업데이트 (활성화된 경우) - 좋아요, 댓글, 조회수 모두 저장
                             if self._db_enabled:
                                 try:
@@ -898,7 +897,7 @@ class ReelViewsTracker:
                                     views = metrics.get('views') if metrics.get('views') is not None else reels[idx].views
                                     likes = metrics.get('likes') if metrics.get('likes') is not None else reels[idx].likes
                                     comments = metrics.get('comments') if metrics.get('comments') is not None else reels[idx].comments
-                                    
+
                                     # 하나라도 값이 있으면 DB에 저장
                                     if views is not None or likes is not None or comments is not None:
                                         self._update_views_in_db(reel_id, views, reels[idx], likes, comments)
@@ -907,13 +906,13 @@ class ReelViewsTracker:
 
                     # 크리에이터 간 딜레이 (최적화: 대기 시간 단축)
                     random_delay(1.0, 2.0)
-                    
+
                 except Exception as e:
                     self.logger.error(f"크리에이터 '{creator_name}' 처리 중 오류: {e}")
                     failed_creators.append(creator_name)
                     # 브라우저가 닫혔는지 확인하고 재시작
                     try:
-                        page.url
+                        _ = page.url
                     except Exception:
                         self.logger.warning("브라우저가 닫혔습니다. 브라우저를 재시작합니다.")
                         if self.browser_manager:
@@ -946,7 +945,7 @@ class ReelViewsTracker:
             if failed_creators:
                 self.logger.warning(f"처리 실패한 크리에이터: {', '.join(failed_creators)}")
                 self.logger.warning("로그인이 필요할 수 있습니다. login() 메서드를 사용하여 로그인하세요.")
-            
+
             return output_file
 
         except Exception as e:
@@ -954,12 +953,12 @@ class ReelViewsTracker:
             raise ScrapingError(f"조회수 추적에 실패했습니다: {e}") from e
 
     def _update_views_in_db(
-        self, 
-        reel_id: str, 
-        views: Optional[int], 
+        self,
+        reel_id: str,
+        views: int | None,
         reel_data: ReelData,
-        likes: Optional[int] = None,
-        comments: Optional[int] = None
+        likes: int | None = None,
+        comments: int | None = None
     ) -> None:
         """
         DB에서 릴스 통계 업데이트 (조회수, 좋아요, 댓글)
