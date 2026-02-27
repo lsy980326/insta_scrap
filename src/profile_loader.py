@@ -48,6 +48,8 @@ def load_profile(profile_name: str) -> ScrapingConfig:
     # .env 기본값 로드 후 프로파일로 오버라이드
     base_config = ScrapingConfig()
     overrides = _build_overrides(profile)
+    # 계정(프로파일) 기준 국가 코드 — DB reels.country_code 저장용
+    overrides["country_code"] = profile_name
 
     return base_config.model_copy(update=overrides)
 

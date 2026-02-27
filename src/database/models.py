@@ -60,6 +60,7 @@ class Reel(Base):
     creator_profile_image = Column(Text, nullable=True)
     title = Column(Text, nullable=True)
     music = Column(Text, nullable=True)
+    country_code = Column(String(10), nullable=True, index=True)  # 수집 계정(프로파일) 기준 국가 (예: kr, jp)
     created_at = Column(TIMESTAMP, default=func.current_timestamp(), nullable=False)
     updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
 

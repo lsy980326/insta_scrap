@@ -5,29 +5,40 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
     const sortBy = searchParams.get('sortBy') || 'views' // 'views', 'likes'
-    const limit = parseInt(searchParams.get('limit') || '1000') // 일주일 단위 그룹화를 위해 충분히 많은 데이터 가져오기
+    const limit = parseInt(searchParams.get('limit') || '1000')
     const offset = parseInt(searchParams.get('offset') || '0')
-    const startDate = searchParams.get('startDate') // YYYY-MM-DD 형식
-    const endDate = searchParams.get('endDate') // YYYY-MM-DD 형식
+    const startDate = searchParams.get('startDate') // YYYY-MM-DD
+    const endDate = searchParams.get('endDate') // YYYY-MM-DD
+    const country = searchParams.get('country') || null // kr, jp 등 (없으면 전체)
 
-    // 정렬 기준에 따른 쿼리
     const orderBy = sortBy === 'likes' ? 'latest_metric.likes DESC NULLS LAST' : 'latest_metric.views DESC NULLS LAST'
 
-    // 날짜 필터 조건 추가
-    let dateFilter = ''
     const queryParams: any[] = [limit, offset]
     let paramIndex = 3
+    let startDateParamIndex: number | null = null
+    const conditions: string[] = ['(latest_metric.views IS NOT NULL OR latest_metric.likes IS NOT NULL)']
 
+    if (country) {
+      conditions.push(`r.country_code = $${paramIndex}`)
+      queryParams.push(country)
+      paramIndex++
+    }
     if (startDate) {
-      dateFilter += ` AND r.created_at >= $${paramIndex}`
+      conditions.push(`r.created_at >= $${paramIndex}`)
       queryParams.push(startDate)
+      startDateParamIndex = paramIndex
       paramIndex++
     }
     if (endDate) {
-      dateFilter += ` AND r.created_at <= $${paramIndex}::date + INTERVAL '1 day'`
+      conditions.push(`r.created_at <= $${paramIndex}::date + INTERVAL '1 day'`)
       queryParams.push(endDate)
       paramIndex++
     }
+
+    const isSingleDay = startDate && endDate && startDate === endDate && startDateParamIndex != null
+    const metricDateFilter = isSingleDay ? `AND reel_metrics.recorded_at::date = $${startDateParamIndex}::date` : ''
+
+    const whereClause = conditions.join(' AND ')
 
     const query = `
       SELECT 
@@ -39,6 +50,7 @@ export async function GET(request: NextRequest) {
         r.creator_profile_image,
         r.title,
         r.music,
+        r.country_code,
         r.created_at,
         latest_metric.likes,
         latest_metric.comments,
@@ -49,11 +61,11 @@ export async function GET(request: NextRequest) {
         SELECT likes, comments, views, recorded_at
         FROM reel_metrics
         WHERE reel_id = r.id
+        ${metricDateFilter}
         ORDER BY recorded_at DESC
         LIMIT 1
       ) latest_metric ON true
-      WHERE (latest_metric.views IS NOT NULL OR latest_metric.likes IS NOT NULL)
-        ${dateFilter}
+      WHERE ${whereClause}
       ORDER BY ${orderBy}
       LIMIT $1 OFFSET $2
     `

@@ -20,6 +20,9 @@ class ScrapingConfig(BaseSettings):
     shortrend_email: str | None = Field(default=None, description="숏트렌드 이메일")
     shortrend_password: str | None = Field(default=None, description="숏트렌드 비밀번호")
 
+    # 국가/프로파일 (수집 계정 기준, DB reels.country_code 저장용)
+    country_code: str | None = Field(default=None, description="국가 코드 (예: kr, jp) — 프로파일 이름과 동일")
+
     # 스크래핑 설정
     hashtag: str | None = Field(default=None, description="해시태그 (예: #fitness)")
     target_url: str | None = Field(default=None, description="특정 릴스 URL")

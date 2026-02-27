@@ -13,6 +13,7 @@ interface Reel {
   creator_profile_image: string | null
   title: string | null
   music: string | null
+  country_code: string | null
   likes: number | null
   comments: number | null
   views: number | null
@@ -26,23 +27,41 @@ interface WeekGroup {
   reels: Reel[]
 }
 
+// 국가 코드 → 한글 표기 (프론트 전용, API에는 kr/jp 그대로 전달)
+const COUNTRY_LABELS: Record<string, string> = {
+  kr: '한국',
+  jp: '일본',
+}
+
 export default function Home() {
   const [reels, setReels] = useState<Reel[]>([])
   const [loading, setLoading] = useState(true)
-  const [sortBy, setSortBy] = useState<'views' | 'likes'>('views')
+  const [sortBy, setSortBy] = useState<'views' | 'likes'>('likes')
   const [selectedReel, setSelectedReel] = useState<Reel | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [startDate, setStartDate] = useState<string>('')
   const [endDate, setEndDate] = useState<string>('')
+  const [country, setCountry] = useState<string>('') // 빈 값 = 전체
+  const [countries, setCountries] = useState<string[]>([])
+
+  useEffect(() => {
+    fetch('/api/countries')
+      .then((res) => res.json())
+      .then((result) => result.success && result.data?.length && setCountries(result.data))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     fetchReels()
-  }, [sortBy, startDate, endDate])
+  }, [sortBy, startDate, endDate, country])
 
   const fetchReels = async () => {
     setLoading(true)
     try {
       let url = `/api/reels/ranking?sortBy=${sortBy}&limit=1000`
+      if (country) {
+        url += `&country=${encodeURIComponent(country)}`
+      }
       if (startDate) {
         url += `&startDate=${startDate}`
       }
@@ -61,23 +80,22 @@ export default function Home() {
     }
   }
 
-  // 일주일 단위로 그룹화
+  // 수집일(recorded_at) 기준 일주일 단위 그룹화 (없으면 created_at 사용)
   const groupByWeek = (reels: Reel[]): WeekGroup[] => {
     if (reels.length === 0) return []
 
     const weekMap = new Map<string, Reel[]>()
 
     reels.forEach((reel) => {
-      const date = new Date(reel.created_at)
-      // 주의 시작일 계산 (월요일 기준)
-      const dayOfWeek = date.getDay() // 0 = 일요일, 1 = 월요일, ..., 6 = 토요일
-      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek // 월요일로 조정
+      const dateStr = reel.recorded_at || reel.created_at
+      const date = new Date(dateStr)
+      const dayOfWeek = date.getDay()
+      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
       const weekStart = new Date(date)
       weekStart.setDate(date.getDate() + diff)
       weekStart.setHours(0, 0, 0, 0)
-      
+
       const weekKey = weekStart.toISOString().split('T')[0]
-      
       if (!weekMap.has(weekKey)) {
         weekMap.set(weekKey, [])
       }
@@ -133,17 +151,16 @@ export default function Home() {
     })
   }
 
-  const formatWeekRange = (weekStart: Date, weekEnd: Date): string => {
-    const start = weekStart.toLocaleDateString('ko-KR', {
-      month: 'long',
-      day: 'numeric',
-    })
-    const end = weekEnd.toLocaleDateString('ko-KR', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-    })
-    return `${start} ~ ${end}`
+  // "2월 첫째 주 (2.15 ~ 2.21)" 형식
+  const formatWeekLabel = (weekStart: Date, weekEnd: Date): string => {
+    const month = weekStart.getMonth() + 1
+    const dayOfMonth = weekStart.getDate()
+    const weekOfMonth = Math.ceil(dayOfMonth / 7)
+    const orderLabels = ['', '첫째', '둘째', '셋째', '넷째', '다섯째']
+    const order = orderLabels[weekOfMonth] || `${weekOfMonth}째`
+    const startShort = `${month}.${weekStart.getDate()}`
+    const endShort = `${weekEnd.getMonth() + 1}.${weekEnd.getDate()}`
+    return `${month}월 ${order} 주 (${startShort} ~ ${endShort})`
   }
 
   const weekGroups = groupByWeek(reels)
@@ -151,66 +168,98 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
       <div className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-white mb-4 text-center">
-            Instagram Reels Ranking
-          </h1>
-          
-          {/* 정렬 버튼 */}
-          <div className="flex justify-center gap-4 mb-6">
-            <button
-              onClick={() => setSortBy('views')}
-              className={`px-6 py-2 rounded-lg font-semibold transition-all ${
-                sortBy === 'views'
-                  ? 'bg-primary-500 text-white shadow-lg'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              조회수 순
-            </button>
-            <button
-              onClick={() => setSortBy('likes')}
-              className={`px-6 py-2 rounded-lg font-semibold transition-all ${
-                sortBy === 'likes'
-                  ? 'bg-primary-500 text-white shadow-lg'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              좋아요 순
-            </button>
-          </div>
+        <h1 className="text-4xl font-bold text-white mb-6 text-center">
+          Instagram Reels Ranking
+        </h1>
 
-          {/* 날짜 범위 필터 */}
-          <div className="flex justify-center gap-4 mb-6 flex-wrap">
-            <div className="flex items-center gap-2">
-              <label className="text-white text-sm">시작일:</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="px-4 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-primary-500"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-white text-sm">종료일:</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="px-4 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-primary-500"
-              />
-            </div>
-            {(startDate || endDate) && (
-              <button
-                onClick={() => {
-                  setStartDate('')
-                  setEndDate('')
-                }}
-                className="px-4 py-2 rounded-lg bg-gray-600 text-white hover:bg-gray-500 text-sm"
+        {/* 필터 카드 */}
+        <div className="mb-10 rounded-2xl bg-gray-800/80 border border-gray-700/80 shadow-xl p-6 backdrop-blur-sm">
+          <div className="flex flex-col lg:flex-row lg:items-end gap-6 lg:gap-8 flex-wrap">
+            {/* 국가 */}
+            <div className="flex flex-col gap-1.5 min-w-[140px]">
+              <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">국가</span>
+              <select
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-gray-700/90 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-shadow"
               >
-                필터 초기화
-              </button>
-            )}
+                <option value="">전체</option>
+                {countries.map((c) => (
+                  <option key={c} value={c}>
+                    {COUNTRY_LABELS[c] ?? c}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 구분선 (데스크톱) */}
+            <div className="hidden lg:block w-px h-10 bg-gray-600 self-center" aria-hidden />
+
+            {/* 정렬 */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">정렬</span>
+              <div className="flex rounded-xl bg-gray-700/90 p-1 border border-gray-600">
+                <button
+                  type="button"
+                  onClick={() => setSortBy('likes')}
+                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+                    sortBy === 'likes'
+                      ? 'bg-primary-500 text-white shadow-md'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-600/50'
+                  }`}
+                >
+                  좋아요 순
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSortBy('views')}
+                  className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+                    sortBy === 'views'
+                      ? 'bg-primary-500 text-white shadow-md'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-600/50'
+                  }`}
+                >
+                  조회수 순
+                </button>
+              </div>
+            </div>
+
+            {/* 구분선 (데스크톱) */}
+            <div className="hidden lg:block w-px h-10 bg-gray-600 self-center" aria-hidden />
+
+            {/* 날짜 범위 */}
+            <div className="flex flex-col sm:flex-row gap-4 sm:gap-4 flex-1">
+              <div className="flex flex-col gap-1.5 min-w-[120px]">
+                <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">시작일</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-700/90 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-shadow [color-scheme:dark]"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5 min-w-[120px]">
+                <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">종료일</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-700/90 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-shadow [color-scheme:dark]"
+                />
+              </div>
+              {(startDate || endDate) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStartDate('')
+                    setEndDate('')
+                  }}
+                  className="self-end px-4 py-2.5 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-600/50 border border-gray-600 hover:border-gray-500 transition-colors"
+                >
+                  초기화
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -228,10 +277,10 @@ export default function Home() {
               <div key={weekIndex} className="space-y-4">
                 <div className="border-b border-gray-700 pb-2">
                   <h2 className="text-2xl font-bold text-white">
-                    {formatWeekRange(week.weekStart, week.weekEnd)}
+                    {formatWeekLabel(week.weekStart, week.weekEnd)}
                   </h2>
                   <p className="text-gray-400 text-sm mt-1">
-                    총 {week.reels.length}개 릴스
+                    {week.weekStart.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' })} ~ {week.weekEnd.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })} · 총 {week.reels.length}개 릴스
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">

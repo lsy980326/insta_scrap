@@ -23,7 +23,7 @@ from .utils.wait_utils import safe_fill_input, wait_for_element
 # 데이터베이스 관련 import (선택적)
 try:
     from .database import get_db_session, init_db
-    from .database.repositories import CreatorRepository, ReelRepository, ScrapingSessionRepository
+    from .database.repositories import CreatorRepository, ReelRepository
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
@@ -1391,46 +1391,83 @@ class InstagramReelsScraper:
             except Exception as e:
                 self.logger.warning(f"counts(geometry_fallback) 실패: {e}")
 
-            # 크리에이터 이름 추출 - reels.txt에서 확인한 규칙 기반
+            # 크리에이터 이름 추출
+            # 시스템 경로로 혼동될 수 있는 pathname 목록
+            _SYSTEM_PATHS = frozenset({
+                'explore', 'reels', 'reel', 'stories', 'accounts',
+                'p', 'tv', 'direct', 'login', 'signup',
+            })
             try:
-                # 방법 1: aria-label에 "님의 릴스"가 포함된 링크에서 추출
+                # 방법 0: /username/reels/ href 기반 (로케일 독립적 — 가장 안정적)
                 try:
-                    creator_link = root.locator('a[aria-label*="님의 릴스"]').first
-                    if creator_link.is_visible(timeout=500):
-                        # href에서 사용자명 추출 (예: /jeonnamdragons_fc/reels/)
-                        href = creator_link.get_attribute("href") or ""
-                        if href.startswith("/") and "/reels/" in href:
-                            username_match = re.search(r'^/([^/]+)/reels', href)
-                            if username_match:
-                                reel_data.author = username_match.group(1)
-                                self.logger.info(f"크리에이터 (href): {reel_data.author}")
-                            else:
-                                # 링크 내부의 span[dir="auto"]에서 텍스트 추출
-                                author_span = creator_link.locator('span[dir="auto"]').first
-                                if author_span.is_visible(timeout=500):
-                                    author_text = author_span.text_content() or ""
-                                    if author_text.strip() and len(author_text.strip()) < 50:
-                                        reel_data.author = author_text.strip()
-                                        self.logger.info(f"크리에이터 (텍스트): {reel_data.author}")
+                    creator_links = root.locator('a[href*="/reels/"]').all()
+                    for link in creator_links[:10]:
+                        try:
+                            href = link.get_attribute("href") or ""
+                            if href.startswith("/") and "/reels" in href:
+                                m = re.search(r'^/([^/]+)/reels', href)
+                                if m:
+                                    candidate = m.group(1)
+                                    if candidate not in _SYSTEM_PATHS and len(candidate) > 0:
+                                        reel_data.author = candidate
+                                        self.logger.info(f"크리에이터 (href): {reel_data.author}")
+                                        break
+                        except Exception:
+                            continue
                 except Exception:
                     pass
 
-                # 방법 2: 프로필 이미지 근처의 span[dir="auto"]에서 추출
+                # 방법 1: aria-label 기반 (한국어/일본어/영어 로케일 지원)
+                if not reel_data.author:
+                    try:
+                        _aria_selectors = [
+                            'a[aria-label*="님의 릴스"]',   # 한국어
+                            'a[aria-label*="のリール"]',     # 일본어
+                            "a[aria-label*=\"'s reels\"]",  # 영어
+                            'a[aria-label*=" reels"]',      # 영어 (다른 패턴)
+                        ]
+                        for sel in _aria_selectors:
+                            try:
+                                creator_link = root.locator(sel).first
+                                if creator_link.is_visible(timeout=300):
+                                    href = creator_link.get_attribute("href") or ""
+                                    if href.startswith("/") and "/reels" in href:
+                                        m = re.search(r'^/([^/]+)/reels', href)
+                                        if m and m.group(1) not in _SYSTEM_PATHS:
+                                            reel_data.author = m.group(1)
+                                            self.logger.info(f"크리에이터 (aria-label href): {reel_data.author}")
+                                            break
+                                    else:
+                                        span = creator_link.locator('span[dir="auto"]').first
+                                        if span.is_visible(timeout=300):
+                                            txt = (span.text_content() or "").strip()
+                                            if txt and len(txt) < 50:
+                                                reel_data.author = txt
+                                                self.logger.info(f"크리에이터 (aria-label 텍스트): {reel_data.author}")
+                                                break
+                            except Exception:
+                                continue
+                        if reel_data.author:
+                            pass  # break 역할 (for-else 없이)
+                    except Exception:
+                        pass
+
+                # 방법 2: 프로필 이미지 근처 span[dir="auto"] (한국어/일본어/영어 alt text)
                 if not reel_data.author:
                     try:
                         profile_imgs = root.locator(
-                            'img[alt*="프로필 사진"], img[alt*="님의 프로필 사진"]'
+                            'img[alt*="프로필 사진"], img[alt*="님의 프로필 사진"],'
+                            ' img[alt*="プロフィール写真"], img[alt*="profile picture"]'
                         ).all()
                         for img in profile_imgs[:5]:
                             try:
-                                # 이미지의 부모 링크에서 span 찾기
                                 parent_link = img.locator('xpath=ancestor::a[1]')
                                 if parent_link.count() > 0:
                                     author_span = parent_link.locator('span[dir="auto"]').first
-                                    if author_span.is_visible(timeout=500):
-                                        author_text = author_span.text_content() or ""
-                                        if author_text.strip() and len(author_text.strip()) < 50:
-                                            reel_data.author = author_text.strip()
+                                    if author_span.is_visible(timeout=300):
+                                        author_text = (author_span.text_content() or "").strip()
+                                        if author_text and len(author_text) < 50:
+                                            reel_data.author = author_text
                                             self.logger.info(f"크리에이터 (프로필 이미지): {reel_data.author}")
                                             break
                             except Exception:
@@ -1441,30 +1478,71 @@ class InstagramReelsScraper:
             except Exception as e:
                 self.logger.debug(f"크리에이터 이름 추출 실패: {e}")
 
-            # 크리에이터 프로필 사진 추출 - reels.txt에서 확인한 규칙 기반
+            # 크리에이터 프로필 사진 추출
             try:
-                # 방법 1: alt에 "님의 프로필 사진"이 포함된 이미지 찾기
+                # 방법 0: /username/reels/ href 내부의 프로필 CDN 이미지 (로케일 독립적)
                 try:
-                    profile_img = root.locator('img[alt*="님의 프로필 사진"]').first
-                    if profile_img.is_visible(timeout=500):
-                        img_src = profile_img.get_attribute("src")
-                        if img_src and "cdninstagram" in img_src:
-                            reel_data.creator_profile_image = img_src
-                            self.logger.info(f"프로필 사진: {reel_data.creator_profile_image[:50]}...")
+                    creator_links = root.locator('a[href*="/reels/"]').all()
+                    for link in creator_links[:10]:
+                        try:
+                            href = link.get_attribute("href") or ""
+                            if href.startswith("/") and "/reels" in href:
+                                m = re.search(r'^/([^/]+)/reels', href)
+                                if m and m.group(1) not in _SYSTEM_PATHS:
+                                    img = link.locator('img[src*="cdninstagram"]').first
+                                    if img.is_visible(timeout=300):
+                                        src = img.get_attribute("src")
+                                        # 프로필 이미지는 CDN 경로에 2885-19 또는 t51.2885 포함
+                                        if src and "cdninstagram" in src:
+                                            reel_data.creator_profile_image = src
+                                            self.logger.info(
+                                                f"프로필 사진 (href): {reel_data.creator_profile_image[:50]}..."
+                                            )
+                                            break
+                        except Exception:
+                            continue
                 except Exception:
                     pass
 
-                # 방법 2: 백업 - 프로필 링크 내부의 이미지
+                # 방법 1: alt text 기반 (한국어/일본어/영어 로케일 지원)
                 if not reel_data.creator_profile_image:
                     try:
-                        creator_link = root.locator('a[aria-label*="님의 릴스"]').first
-                        if creator_link.is_visible(timeout=500):
-                            profile_img = creator_link.locator('img[src*="cdninstagram"]').first
-                            if profile_img.is_visible(timeout=500):
-                                img_src = profile_img.get_attribute("src")
-                                if img_src:
-                                    reel_data.creator_profile_image = img_src
-                                    self.logger.info(f"프로필 사진 (백업): {reel_data.creator_profile_image[:50]}...")
+                        profile_img = root.locator(
+                            'img[alt*="님의 프로필 사진"], img[alt*="프로필 사진"],'
+                            ' img[alt*="プロフィール写真"], img[alt*="のプロフィール写真"],'
+                            ' img[alt*="profile picture"]'
+                        ).first
+                        if profile_img.is_visible(timeout=500):
+                            img_src = profile_img.get_attribute("src")
+                            if img_src and "cdninstagram" in img_src:
+                                reel_data.creator_profile_image = img_src
+                                self.logger.info(f"프로필 사진 (alt): {reel_data.creator_profile_image[:50]}...")
+                    except Exception:
+                        pass
+
+                # 방법 2: aria-label 기반 링크 내부 이미지
+                if not reel_data.creator_profile_image:
+                    try:
+                        _aria_selectors = [
+                            'a[aria-label*="님의 릴스"]',
+                            'a[aria-label*="のリール"]',
+                            "a[aria-label*=\"'s reels\"]",
+                        ]
+                        for sel in _aria_selectors:
+                            try:
+                                creator_link = root.locator(sel).first
+                                if creator_link.is_visible(timeout=300):
+                                    img = creator_link.locator('img[src*="cdninstagram"]').first
+                                    if img.is_visible(timeout=300):
+                                        src = img.get_attribute("src")
+                                        if src:
+                                            reel_data.creator_profile_image = src
+                                            self.logger.info(
+                                                f"프로필 사진 (aria-label): {reel_data.creator_profile_image[:50]}..."
+                                            )
+                                            break
+                            except Exception:
+                                continue
                     except Exception:
                         pass
 
@@ -1691,6 +1769,18 @@ class InstagramReelsScraper:
                         if needs_reel_id and cached_data.get("code"):
                             reel_data.link = f"https://www.instagram.com/reels/{cached_data['code']}/"
                             self.logger.info(f"링크 업데이트 (캐시에서 reel_id 추출): {reel_data.link}")
+                        # 네트워크 캐시 썸네일은 shortcode와 1:1 대응이라 DOM poster보다 정확
+                        # DOM video.poster는 슬롯 재사용으로 이전 릴스 값이 남을 수 있으므로
+                        # 캐시에 값이 있으면 항상 덮어씀
+                        if cached_data.get("thumbnail"):
+                            reel_data.thumbnail = cached_data["thumbnail"]
+                            self.logger.info(f"썸네일 (캐시 우선): {reel_data.thumbnail[:50]}...")
+                        if reel_data.author is None and cached_data.get("author"):
+                            reel_data.author = cached_data["author"]
+                            self.logger.info(f"크리에이터 (캐시 fallback): {reel_data.author}")
+                        if reel_data.creator_profile_image is None and cached_data.get("profile_image"):
+                            reel_data.creator_profile_image = cached_data["profile_image"]
+                            self.logger.info(f"프로필 사진 (캐시 fallback): {reel_data.creator_profile_image[:50]}...")
 
                         self.logger.info(
                             f"counts(cache): "
@@ -1756,7 +1846,7 @@ class InstagramReelsScraper:
     def _parse_and_cache_reels(self, json_data: dict) -> None:
         """
         네트워크 패킷에서 릴스 정보를 추출하여 캐시에 저장 (구조 변화 대응 강화판)
-        
+
         Args:
             json_data: 네트워크 응답 JSON 데이터
         """
@@ -1788,7 +1878,7 @@ class InstagramReelsScraper:
 
             # 2. 만약 알려진 키가 없으면, 'edges'를 가진 모든 하위 딕셔너리를 검색 (비상 대책)
             if not edges:
-                for key, value in data_inner.items():
+                for _key, value in data_inner.items():
                     if isinstance(value, dict) and "edges" in value:
                         edges.extend(value["edges"])
 
@@ -1823,16 +1913,70 @@ class InstagramReelsScraper:
 
                     # 게시일자 추출
                     posted_date = None
-                    if "taken_at_timestamp" in media and isinstance(media["taken_at_timestamp"], (int, float)):
+                    if "taken_at_timestamp" in media and isinstance(
+                        media["taken_at_timestamp"], int | float
+                    ):
                         import datetime
                         posted_date = datetime.datetime.fromtimestamp(
                             media["taken_at_timestamp"]
                         ).isoformat()
-                    elif "taken_at" in media and isinstance(media["taken_at"], (int, float)):
+                    elif "taken_at" in media and isinstance(media["taken_at"], int | float):
                         import datetime
                         posted_date = datetime.datetime.fromtimestamp(
                             media["taken_at"]
                         ).isoformat()
+
+                    # 썸네일 추출 — 여러 경로 시도 (API 버전·구조에 따라 위치가 다름)
+                    thumbnail_url = None
+                    try:
+                        # image_versions2 (가장 일반적인 GraphQL 형식)
+                        candidates = media.get("image_versions2", {}).get("candidates", [])
+                        if candidates:
+                            # 가장 큰 해상도(첫 번째)를 사용
+                            thumbnail_url = candidates[0].get("url")
+
+                        # carousel_media[0].image_versions2 (캐러셀 첫 장)
+                        if not thumbnail_url:
+                            carousel = media.get("carousel_media", [])
+                            if carousel:
+                                sub = carousel[0].get("image_versions2", {}).get("candidates", [])
+                                if sub:
+                                    thumbnail_url = sub[0].get("url")
+
+                        # thumbnail_resources (구형 API)
+                        if not thumbnail_url:
+                            resources = media.get("thumbnail_resources", [])
+                            if resources:
+                                thumbnail_url = resources[-1].get("src")
+
+                        # 단순 필드 fallback
+                        if not thumbnail_url:
+                            thumbnail_url = (
+                                media.get("thumbnail_src")
+                                or media.get("display_url")
+                                or media.get("cover_frame_url")
+                            )
+                    except Exception:
+                        pass
+
+                    # author 추출 (user.username)
+                    cached_author = None
+                    try:
+                        user = media.get("user") or media.get("owner") or {}
+                        cached_author = user.get("username") or user.get("screen_name")
+                    except Exception:
+                        pass
+
+                    # profile image 추출 (user.profile_pic_url)
+                    cached_profile_image = None
+                    try:
+                        user = media.get("user") or media.get("owner") or {}
+                        cached_profile_image = (
+                            user.get("profile_pic_url")
+                            or user.get("profile_picture_url")
+                        )
+                    except Exception:
+                        pass
 
                     # 캐시에 저장 (이미 있으면 덮어쓰기)
                     cached_item = {
@@ -1841,12 +1985,17 @@ class InstagramReelsScraper:
                         "comments": comment_count,
                         "views": views,
                         "posted_date": posted_date,
+                        "thumbnail": thumbnail_url,
+                        "author": cached_author,
+                        "profile_image": cached_profile_image,
                         "cached_at": time.time()
                     }
                     self._reels_cache[shortcode] = cached_item
                     self.logger.debug(
                         f"💾 캐시 저장: {shortcode} -> "
-                        f"L:{like_count}, C:{comment_count}, V:{views}"
+                        f"L:{like_count}, C:{comment_count}, V:{views}, "
+                        f"thumb={'O' if thumbnail_url else 'X'}, "
+                        f"author={cached_author or '-'}"
                     )
         except Exception as e:
             self.logger.debug(f"캐시 파싱 실패: {e}")
@@ -1986,6 +2135,7 @@ class InstagramReelsScraper:
             collected_reel_ids: set[str] = set()  # 중복 체크용 (URL 기반 ID)
             collected_thumbnails: set[str] = set()  # 썸네일 중복 체크용
             save_interval = 10  # 10개마다 저장
+            last_db_saved_count = 0  # DB에 저장한 구간 끝 인덱스 (reel_metrics 중복 방지)
             consecutive_failures = 0  # 연속 이동 실패 횟수
             max_failures = 5  # 최대 연속 이동 실패 허용 횟수
             consecutive_duplicates = 0  # 연속 중복 감지 횟수
@@ -2092,10 +2242,14 @@ class InstagramReelsScraper:
                                 )
                                 break
 
-                        # 주기적으로 저장
+                        # 주기적으로 저장 (JSON은 전체, DB는 새로 수집된 구간만 전달해 reel_metrics 중복 방지)
                         if len(collected_reels) >= save_interval:
                             self.logger.info(f"{save_interval}개 수집 완료. 임시 저장 중...")
-                            self.save_to_json(collected_reels)
+                            self.save_to_json(
+                                collected_reels,
+                                db_only_new_count=last_db_saved_count,
+                            )
+                            last_db_saved_count = len(collected_reels)
                             save_interval += 10
 
                     # 다음 릴스로 이동
@@ -2116,14 +2270,26 @@ class InstagramReelsScraper:
 
                 except KeyboardInterrupt:
                     self.logger.info("사용자에 의해 중단되었습니다.")
-                    # 중단 전 마지막 저장
+                    # 중단 전 마지막 저장 (DB에는 아직 저장 안 한 구간만)
                     if collected_reels:
                         self.logger.info("중단 전 데이터 저장 중...")
-                        self.save_to_json(collected_reels)
+                        self.save_to_json(
+                            collected_reels,
+                            db_only_new_count=last_db_saved_count,
+                        )
+                        last_db_saved_count = len(collected_reels)
                     break
                 except Exception as e:
                     self.logger.error(f"릴스 수집 중 오류 (계속 진행): {e}")
                     time.sleep(2)
+
+            # 루프 종료 후 아직 DB에 안 넣은 구간이 있으면 한 번 더 저장
+            if collected_reels and last_db_saved_count < len(collected_reels):
+                self.logger.info("수집 종료. 남은 데이터 저장 중...")
+                self.save_to_json(
+                    collected_reels,
+                    db_only_new_count=last_db_saved_count,
+                )
 
         except Exception as e:
             self.logger.error(f"릴스 수집 실패: {e}")
@@ -2227,13 +2393,20 @@ class InstagramReelsScraper:
             self.logger.error(f"데이터 추출 실패: {e}")
             raise DataExtractionError(f"데이터 추출에 실패했습니다: {e}") from e
 
-    def save_to_json(self, data: list[ReelData], filename: str | None = None) -> Path:
+    def save_to_json(
+        self,
+        data: list[ReelData],
+        filename: str | None = None,
+        db_only_new_count: int | None = None,
+    ) -> Path:
         """
         데이터를 JSON 파일로 저장
 
         Args:
             data: 저장할 데이터
             filename: 파일명 (None이면 자동 생성)
+            db_only_new_count: 지정 시 DB에는 data[db_only_new_count:]만 저장 (reel_metrics 중복 방지).
+                               None이면 전체 data를 DB에 저장.
 
         Returns:
             저장된 파일 경로
@@ -2259,10 +2432,16 @@ class InstagramReelsScraper:
 
             self.logger.info(f"데이터 저장 완료: {len(data)}개 항목")
 
-            # DB가 활성화되어 있으면 DB에도 저장
+            # DB가 활성화되어 있으면 DB에도 저장 (새로 수집된 구간만 전달해 reel_metrics 중복 방지)
             if self._db_enabled:
-                self.logger.info("DB 저장 시작...")
-                self._save_to_db(data)
+                to_save = (
+                    data[db_only_new_count:]
+                    if db_only_new_count is not None and db_only_new_count < len(data)
+                    else data
+                )
+                if to_save:
+                    self.logger.info(f"DB 저장 시작... (신규 {len(to_save)}건)")
+                    self._save_to_db(to_save)
             else:
                 self.logger.debug(f"DB 저장 건너뜀 (DB 활성화 여부: {self._db_enabled}, config.db_enabled: {self.config.db_enabled})")
 
@@ -2304,8 +2483,8 @@ class InstagramReelsScraper:
 
             self.logger.info(f"CSV 저장 완료: {len(data)}개 항목")
             return filepath
-        except ImportError:
-            raise InstagramScraperError("CSV 저장을 위해 pandas가 필요합니다.")
+        except ImportError as e:
+            raise InstagramScraperError("CSV 저장을 위해 pandas가 필요합니다.") from e
         except Exception as e:
             self.logger.error(f"CSV 저장 실패: {e}")
             raise InstagramScraperError(f"CSV 저장에 실패했습니다: {e}") from e
@@ -2329,7 +2508,6 @@ class InstagramReelsScraper:
             try:
                 creator_repo = CreatorRepository(session)
                 reel_repo = ReelRepository(session)
-                session_repo = ScrapingSessionRepository(session)
 
                 saved_count = 0
                 updated_count = 0
@@ -2343,8 +2521,10 @@ class InstagramReelsScraper:
                                 profile_image_url=reel_data.creator_profile_image,
                             )
 
-                        # 릴스 저장/업데이트
-                        reel, is_new = reel_repo.create_or_update_reel(reel_data)
+                        # 릴스 저장/업데이트 (계정 기준 country_code는 신규 생성 시에만 설정)
+                        reel, is_new = reel_repo.create_or_update_reel(
+                            reel_data, country_code=getattr(self.config, "country_code", None)
+                        )
                         if is_new:
                             saved_count += 1
                         else:

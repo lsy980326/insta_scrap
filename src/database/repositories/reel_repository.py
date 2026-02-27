@@ -75,12 +75,15 @@ class ReelRepository:
             return None
         return self.find_by_reel_id(reel_id)
 
-    def create_or_update_reel(self, reel_data: ReelData) -> tuple[Reel, bool]:
+    def create_or_update_reel(
+        self, reel_data: ReelData, country_code: str | None = None
+    ) -> tuple[Reel, bool]:
         """
         릴스 생성 또는 업데이트 (중복 체크 포함)
 
         Args:
             reel_data: Pydantic ReelData 객체
+            country_code: 국가 코드 (예: kr, jp). 신규 생성 시에만 설정, 업데이트 시에는 기존 값 유지.
 
         Returns:
             (Reel 객체, is_new: bool) 튜플
@@ -140,6 +143,7 @@ class ReelRepository:
                 creator_profile_image=reel_data.creator_profile_image,
                 title=reel_data.title,
                 music=reel_data.music,
+                country_code=country_code,
                 created_at=posted_datetime if posted_datetime else func.current_timestamp(),
                 updated_at=posted_datetime if posted_datetime else func.current_timestamp(),
             )

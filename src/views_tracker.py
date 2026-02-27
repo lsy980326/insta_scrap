@@ -577,7 +577,7 @@ class ReelViewsTracker:
                     f"크리에이터 '{creator_name}'의 reels 페이지 접근 시 로그인이 풀렸습니다. "
                     "로그인 페이지로 리다이렉트되었습니다."
                 )
-                return views_dict
+                return metrics_dict
 
             self.logger.info(f"크리에이터 '{creator_name}'의 reels 페이지에서 조회수 추출 중...")
 
@@ -619,15 +619,15 @@ class ReelViewsTracker:
                                 extracted_data = element_handle.evaluate("""
                                     (link) => {
                                         const result = { views: null, likes: null, comments: null };
-                                        
+
                                         // 링크의 부모 요소에서 통계 정보 찾기
                                         let parent = link.parentElement;
                                         let depth = 0;
-                                        
+
                                         // 통계 컨테이너 찾기 (일반적으로 통계들이 함께 있는 컨테이너)
                                         while (parent && depth < 5) {
                                             // 구조 파악: _aajz > _aaj- (좋아요/댓글) > _aaj_ (조회수)
-                                            
+
                                             // 1. 조회수 찾기: _aaj_ 안에 조회수 아이콘과 숫자
                                             const viewsContainer = parent.querySelector('div._aaj_');
                                             if (viewsContainer && !result.views) {
@@ -648,14 +648,14 @@ class ReelViewsTracker:
                                                     }
                                                 }
                                             }
-                                            
+
                                             // 2. 좋아요와 댓글 찾기: _aaj- 안에 ul > li 순서대로
                                             const statsContainer = parent.querySelector('div._aaj-');
                                             if (statsContainer) {
                                                 const ul = statsContainer.querySelector('ul');
                                                 if (ul) {
                                                     const lis = Array.from(ul.querySelectorAll('li'));
-                                                    
+
                                                     // 첫 번째 li: 좋아요 (위)
                                                     if (lis.length > 0 && !result.likes) {
                                                         const firstLi = lis[0];
@@ -668,7 +668,7 @@ class ReelViewsTracker:
                                             }
                                         }
                                                     }
-                                                    
+
                                                     // 두 번째 li: 댓글 (아래)
                                                     if (lis.length > 1 && result.comments === null) {
                                                         const secondLi = lis[1];
@@ -683,21 +683,21 @@ class ReelViewsTracker:
                                                     }
                                                 }
                                             }
-                                            
+
                                             // 모든 통계를 찾았으면 종료
                                             if (result.views && result.likes && result.comments !== null) {
                                                 break;
                                             }
-                                            
+
                                             parent = parent.parentElement;
                                             depth++;
                                         }
-                                        
+
                                         // 하나라도 찾았으면 반환
                                         if (result.views || result.likes || result.comments !== null) {
                                             return result;
                                         }
-                                        
+
                                         return null;
                                     }
                                 """)
