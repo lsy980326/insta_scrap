@@ -1444,20 +1444,24 @@ class InstagramReelsScraper:
 
             # 제목 추출 - 제공된 HTML 구조 기반
             try:
-                # 방법 1: span.x6ikm8r.x10wlt62.xuxw1ft 클래스를 가진 요소 (제목 스타일)
+
+                # 방법 1: page 전체에서 visible한 캡션 div 탐색
+                # DOM: div[role="presentation"] > div[role="button"] > div > div[dir="auto"] > span
+                # root 범위 밖(카드 외부)에 캡션이 위치할 수 있으므로 page 기준으로 탐색
                 try:
-                    title_spans = root.locator('span.x6ikm8r.x10wlt62.xuxw1ft').all()
-                    for span in title_spans[:10]:
+                    caption_divs = page.locator('div[role="presentation"] div[dir="auto"]').all()
+                    for cdiv in caption_divs[:10]:
                         try:
-                            title_text = span.text_content() or ""
+                            if not cdiv.is_visible(timeout=300):
+                                continue
+                            title_text = cdiv.text_content() or ""
                             title_text = title_text.strip()
-                            # 제목 조건: 충분히 긴 텍스트, 사용자명/음악과 다름
+                            # "더 보기" 같은 UI 텍스트 제거
+                            title_text = re.sub(r'\s*(더 보기|more|show more)\s*$', '', title_text, flags=re.IGNORECASE).strip()
                             if (len(title_text) > 5 and len(title_text) < 500 and
                                 title_text != reel_data.author and
-                                (not reel_data.music or title_text != reel_data.music) and
                                 not title_text.startswith('@') and
-                                not re.match(r'^[\d,]+$', title_text) and
-                                not title_text.startswith('오리지널')):
+                                not re.match(r'^[\d,]+$', title_text)):
                                 reel_data.title = title_text
                                 self.logger.info(f"제목: {reel_data.title[:50]}...")
                                 break
@@ -1466,17 +1470,16 @@ class InstagramReelsScraper:
                 except Exception:
                     pass
 
-                # 방법 2: span[dir="auto"] 중에서 긴 텍스트 찾기 (백업)
+                # 방법 2: root 범위 내 div[dir="auto"] 직접 자식 span (백업)
                 if not reel_data.title:
                     try:
-                        title_spans = root.locator('span[dir="auto"]').all()
-                        for span in title_spans[:20]:
+                        title_spans = root.locator('div[dir="auto"] > span.x6ikm8r.x10wlt62.xuxw1ft').all()
+                        for span in title_spans[:5]:
                             try:
                                 title_text = span.text_content() or ""
                                 title_text = title_text.strip()
-                                if (len(title_text) > 10 and len(title_text) < 500 and
+                                if (len(title_text) > 5 and len(title_text) < 500 and
                                     title_text != reel_data.author and
-                                    (not reel_data.music or title_text != reel_data.music) and
                                     not title_text.startswith('@') and
                                     not re.match(r'^[\d,]+$', title_text)):
                                     reel_data.title = title_text

@@ -68,6 +68,8 @@ def main() -> None:
     setup_logger(
         log_level=config.log_level,
         log_file=config.log_file,
+        rotation=config.log_rotation,
+        retention=config.log_retention,
     )
 
     logger = get_logger(__name__)

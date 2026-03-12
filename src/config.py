@@ -70,6 +70,8 @@ class ScrapingConfig(BaseSettings):
     # 로깅 설정
     log_level: str = Field(default="INFO", description="로깅 레벨")
     log_file: Path | None = Field(default=None, description="로그 파일 경로")
+    log_rotation: str = Field(default="50 MB", description="로그 rotation 기준 (예: '50 MB', '1 day')")
+    log_retention: int | str = Field(default=10, description="보관 파일 수 또는 기간 (예: 10, '30 days')")
 
     # 데이터베이스 설정
     db_enabled: bool = Field(default=False, description="데이터베이스 사용 여부")
@@ -95,6 +97,24 @@ class ScrapingConfig(BaseSettings):
     session_file_dir: Path = Field(
         default=Path("sessions"), description="세션 파일 저장 디렉토리 (file 타입일 때)"
     )
+
+    @field_validator("log_retention", mode="before")
+    @classmethod
+    def validate_log_retention(cls, v: any) -> int | str:  # noqa: ANN001
+        """log_retention: 숫자 문자열은 int로, 빈 값은 기본값으로"""
+        if v == "" or v is None:
+            return 10
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return 10
+            try:
+                return int(v)
+            except ValueError:
+                return v  # "30 days" 같은 기간 문자열
+        return v
 
     @field_validator("log_file", mode="before")
     @classmethod

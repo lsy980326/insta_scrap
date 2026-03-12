@@ -11,8 +11,8 @@ from loguru import logger
 def setup_logger(
     log_level: str = "INFO",
     log_file: Path | None = None,
-    rotation: str = "1 day",
-    retention: str = "30 days",
+    rotation: str = "50 MB",
+    retention: int | str = 10,
 ) -> None:
     """
     로거 설정
@@ -20,8 +20,8 @@ def setup_logger(
     Args:
         log_level: 로깅 레벨 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: 로그 파일 경로 (None이면 파일 로깅 안 함)
-        rotation: 로그 파일 회전 크기
-        retention: 로그 파일 보관 기간
+        rotation: 로그 rotation 기준 (예: "50 MB", "1 day")
+        retention: 보관 파일 수(int) 또는 기간(str, 예: "30 days")
     """
     # 기본 로거 제거
     logger.remove()

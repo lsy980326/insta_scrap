@@ -31,7 +31,7 @@ sudo apt update -qq
 sudo apt install -y git curl python3 python3-pip libglib2.0-0 \
     libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
     libcups2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
-    libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
+    libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64
 
 # ── 2. 서버 타임존 ─────────────────────────────────────────────────
 echo "[2/7] 서버 타임존 설정 ($TZ_NAME)..."
@@ -49,7 +49,7 @@ echo "Poetry 버전: $(poetry --version)"
 # ── 4. 프로젝트 설치 ──────────────────────────────────────────────
 echo "[4/7] 프로젝트 의존성 설치 중..."
 cd "$PROJECT_DIR"
-poetry install --no-dev
+poetry install --without dev
 poetry run playwright install chromium
 poetry run playwright install-deps chromium
 echo "의존성 설치 완료"
@@ -94,18 +94,33 @@ sudo tee "$CRON_FILE" > /dev/null <<EOF
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 
-# 매일 02:00 릴스 수집
-0 2 * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python main.py --profile $PROFILE >> $PROJECT_DIR/logs/collect_\$(date +\\%Y\\%m\\%d).log 2>&1
+# 매일 02:00 릴스 수집 (로그는 loguru가 logs/scraper.log에 기록)
+0 2 * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python main.py --profile $PROFILE > /dev/null 2>&1
 
 # 매일 06:00 조회수 추적
-0 6 * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python track_views.py output/$PROFILE/\$(date +\\%Y\\%m\\%d)*.json >> $PROJECT_DIR/logs/track_\$(date +\\%Y\\%m\\%d).log 2>&1
+0 6 * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python track_views.py output/$PROFILE/\$(date +\\%Y\\%m\\%d)*.json --profile $PROFILE > /dev/null 2>&1
 
-# 매주 일요일 03:00 오래된 로그 정리 (30일 이상)
-0 3 * * 0 $SERVICE_USER find $PROJECT_DIR/logs -name "*.log" -mtime +30 -delete
+# 매주 일요일 03:00 output JSON 30일 이상, 압축 로그 10일 이상 삭제
+0 3 * * 0 $SERVICE_USER find $PROJECT_DIR/output -name "*.json" -mtime +30 -delete
+0 3 * * 0 $SERVICE_USER find $PROJECT_DIR/logs -name "*.zip" -mtime +10 -delete
 EOF
 
 sudo chmod 644 "$CRON_FILE"
 echo "Cron 등록 완료: $CRON_FILE"
+
+# ── 7.5. logrotate 설정 ────────────────────────────────────────────
+echo "[7.5] logrotate 설정 중..."
+sudo tee "/etc/logrotate.d/insta-scraper" > /dev/null <<EOF
+$PROJECT_DIR/logs/*.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+echo "logrotate 설정 완료: /etc/logrotate.d/insta-scraper"
 
 # ── 완료 ──────────────────────────────────────────────────────────
 echo ""
