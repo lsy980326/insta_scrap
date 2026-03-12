@@ -28,6 +28,13 @@ try:
 except ImportError:
     DB_AVAILABLE = False
 
+# S3 썸네일 아카이빙 import (선택적)
+try:
+    from .thumbnail_archiver import build_archiver_from_config
+    S3_AVAILABLE = True
+except ImportError:
+    S3_AVAILABLE = False
+
 
 class InstagramReelsScraper:
     """
@@ -172,208 +179,94 @@ class InstagramReelsScraper:
 
             page = self.browser_manager.get_page()
 
-            # 인스타그램 메인 페이지로 이동
-            self.logger.info("인스타그램 메인 페이지로 이동 중...")
-            page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=30000)
-
-            # 페이지가 완전히 로드될 때까지 대기 (DOM만 확인, networkidle은 타임아웃 위험)
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=10000)
-            except Exception:
-                self.logger.debug("페이지 로드 대기 실패 (계속 진행)")
-
-            random_delay(1.0, 2.0)  # 사용자처럼 랜덤 대기
-
-            # 페이지 상호작용 시뮬레이션 (봇 감지 우회)
+            # ── 로그인 페이지 직접 접근 ──────────────────────────────────────
+            # 메인 페이지(/)에서 로그인 링크를 찾는 방식은 UI 변경에 취약.
+            # /accounts/login/ 은 항상 로그인 폼을 보여주므로 직접 이동.
+            self.logger.info("로그인 페이지 직접 접근 중...")
+            page.goto(
+                "https://www.instagram.com/accounts/login/",
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            random_delay(1.5, 2.5)
             simulate_page_interaction(page, min_actions=1, max_actions=2)
 
-            # 로그인 링크 클릭 또는 로그인 폼 확인
-            self.logger.info("로그인 폼 확인 중...")
+            # 쿠키 수락 팝업 (있는 경우만)
             try:
-                # 이미 로그인되어 있는지 확인
-                if "accounts/login" not in page.url:
-                    # 로그인 링크 찾기
-                    login_link_selectors = [
-                        'a[href*="/accounts/login"]',
-                        'a:has-text("Log in")',
-                        'a:has-text("로그인")',
-                    ]
-
-                    login_link = None
-                    for selector in login_link_selectors:
-                        try:
-                            login_link = page.locator(selector).first
-                            if login_link.is_visible(timeout=3000):
-                                self.logger.info(f"로그인 링크 찾음: {selector}")
-                                login_link.click()
-                                try:
-                                    page.wait_for_load_state("domcontentloaded", timeout=5000)
-                                except Exception:
-                                    pass
-                                page.wait_for_timeout(2000)
-                                break
-                        except Exception:
-                            continue
-
-                # 로그인 폼이 나타날 때까지 대기
-                # 신규 버전은 #loginForm 없이 name="email" input을 사용
-                try:
-                    page.wait_for_selector("#loginForm", timeout=5000, state="visible")
-                    self.logger.info("로그인 폼 로드 완료 (구버전 #loginForm)")
-                except Exception:
-                    page.wait_for_selector(
-                        'input[name="email"], input[name="username"]',
-                        timeout=10000,
-                        state="visible",
-                    )
-                    self.logger.info("로그인 폼 로드 완료 (신규 버전 input[name=email])")
-            except Exception as e:
-                self.logger.warning(f"로그인 폼 셀렉터 대기 실패, 계속 진행: {e}")
-
-            # 추가 안정화 대기
-            page.wait_for_load_state("domcontentloaded")
-            page.wait_for_timeout(1000)
-
-            # 쿠키 수락 (있는 경우)
-            try:
-                accept_cookies = page.locator('button:has-text("Accept")').or_(
-                    page.locator('button:has-text("수락")')
-                )
-                if accept_cookies.count() > 0:
-                    accept_cookies.first.click()
-                    page.wait_for_timeout(1000)
+                cookie_btn = page.locator(
+                    'button:has-text("Accept"), button:has-text("수락"), button:has-text("許可")'
+                ).first
+                if cookie_btn.is_visible(timeout=2000):
+                    cookie_btn.click()
+                    page.wait_for_timeout(800)
             except Exception:
-                pass  # 쿠키 버튼이 없을 수 있음
+                pass
 
-            # 디버깅: 페이지 HTML 저장 및 스크린샷 저장
-            self.logger.info("=" * 60)
-            self.logger.info("로그인 페이지 로드 완료")
-            self.logger.info("=" * 60)
-            self.logger.info("현재 페이지 URL: " + page.url)
+            # 로그인 폼 대기 — autocomplete 속성은 UI 버전과 무관하게 안정적
+            try:
+                page.wait_for_selector(
+                    'input[autocomplete*="username"], input[type="text"]',
+                    timeout=15000,
+                    state="visible",
+                )
+            except Exception:
+                page.wait_for_selector("input", timeout=10000, state="visible")
 
-            # 페이지 HTML 저장 (디버깅용)
-            html_content = page.content()
+            self.logger.info(f"로그인 페이지 로드 완료: {page.url}")
+
+            # 디버그 스크린샷
             debug_dir = self.config.output_dir / "debug"
             debug_dir.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(debug_dir / "login_page.png"))
 
-            html_file = debug_dir / "login_page.html"
-            with open(html_file, "w", encoding="utf-8") as f:
-                f.write(html_content)
-            self.logger.info(f"페이지 HTML 저장: {html_file}")
-
-            # 스크린샷 저장
-            screenshot_file = debug_dir / "login_page.png"
-            page.screenshot(path=str(screenshot_file), full_page=True)
-            self.logger.info(f"스크린샷 저장: {screenshot_file}")
-
-            self.logger.info("입력 필드와 로그인 버튼을 찾는 중...")
-
-            # 사용자명 입력 필드 찾기 및 입력
-            # 신규 버전: name="email", autocomplete="username webauthn"
-            # 구버전: name="username", #loginForm 구조
+            # ── 사용자명 입력 ──────────────────────────────────────────────
+            # autocomplete 기반 → 타입 기반 순서로 시도 (name 속성은 자주 변경됨)
             username_selectors = [
-                'input[name="email"]',                                         # 신규 버전 (name=email)
-                'input[autocomplete="username webauthn"]',                     # 신규 버전 (autocomplete)
-                'input[autocomplete="username"]',                              # 구버전 autocomplete
-                "#loginForm > div > div:nth-child(1) > div > label > input",  # 구버전 셀렉터
-                '#loginForm input[type="text"]',
-                'input[name="username"]',
-                'input[aria-label*="전화번호"]',
-                'input[aria-label*="사용자 이름"]',
+                'input[autocomplete="username webauthn"]',  # 최신 UI
+                'input[autocomplete="username"]',           # 이전 UI
+                'input[type="text"]:visible',               # 타입 기반 fallback
+                'input:not([type="password"]):visible',     # password 아닌 첫 input
             ]
-
-            # 유틸리티 함수로 요소 찾기
             username_input = wait_for_element(
-                page, username_selectors, timeout=5000, description="사용자명 입력 필드"
+                page, username_selectors, timeout=10000, description="사용자명 입력 필드"
             )
-
             if not username_input:
                 raise LoginError("사용자명 입력 필드를 찾을 수 없습니다.")
-
-            # 안전하게 입력 (유틸리티 함수 사용)
             if not safe_fill_input(username_input, username, description="사용자명"):
                 raise LoginError("사용자명 입력에 실패했습니다.")
+            page.wait_for_timeout(500)
 
-            # 비밀번호 입력 필드 찾기 및 입력
-            # 신규 버전: name="pass"
-            # 구버전: name="password", #loginForm 구조
-            password_selectors = [
-                'input[name="pass"]',                                          # 신규 버전 (name=pass)
-                'input[type="password"]',                                      # 타입 기반 (공통)
-                "#loginForm > div > div:nth-child(2) > div > label > input",  # 구버전 셀렉터
-                '#loginForm input[type="password"]',
-                'input[name="password"]',
-            ]
-
-            # 유틸리티 함수로 요소 찾기
+            # ── 비밀번호 입력 ──────────────────────────────────────────────
+            # type="password" 는 UI 버전에 관계없이 불변
             password_input = wait_for_element(
-                page, password_selectors, timeout=5000, description="비밀번호 입력 필드"
+                page,
+                ['input[type="password"]:visible', 'input[type="password"]'],
+                timeout=5000,
+                description="비밀번호 입력 필드",
             )
-
             if not password_input:
                 raise LoginError("비밀번호 입력 필드를 찾을 수 없습니다.")
-
-            # 안전하게 입력 (유틸리티 함수 사용)
             if not safe_fill_input(password_input, password, description="비밀번호"):
                 raise LoginError("비밀번호 입력에 실패했습니다.")
+            page.wait_for_timeout(500)
 
-            # 로그인 버튼 찾기 및 클릭
-            # 신규 버전: <div role="none"> 안에 span 텍스트 "로그인" 구조 (button 태그 없음)
-            # 구버전: #loginForm button[type="submit"]
-            login_button_selectors = [
-                'div[role="none"]:has(span:text-is("로그인"))',   # 신규 한국어
-                'div[role="none"]:has(span:text-is("ログイン"))', # 신규 일본어
-                'div[role="none"]:has(span:text-is("Log in"))',   # 신규 영어
-                'button:has-text("로그인")',                      # 구버전 한국어
-                'button:has-text("ログイン")',                    # 구버전 일본어
-                'button:has-text("Log in")',                      # 구버전 영어
-                'button[type="submit"]',
-                '#loginForm button[type="submit"]',
-                "#loginForm > div > div:nth-child(3) button",
-                "#loginForm > div > div:nth-child(3)",
-            ]
+            # ── Enter 키로 제출 ────────────────────────────────────────────
+            # 버튼 셀렉터는 UI 버전/언어마다 달라 불안정 → Enter 키로 대체
+            self.logger.info("Enter 키로 로그인 제출 중...")
+            page.keyboard.press("Enter")
 
-            # 유틸리티 함수로 요소 찾기
-            login_button = wait_for_element(
-                page, login_button_selectors, timeout=5000, description="로그인 버튼"
-            )
-
-            if not login_button:
-                raise LoginError("로그인 버튼을 찾을 수 없습니다.")
-
-            # 버튼이 활성화될 때까지 대기
-            self.logger.info("로그인 버튼 활성화 대기 중...")
+            # ── URL 변화 기반 로그인 성공 감지 (최대 30초) ─────────────────
+            # 고정 sleep(20) 대신 실제 URL 변화를 기다림 → 빠르면 빠를수록 좋음
+            self.logger.info("로그인 처리 대기 중... (URL 변화 감지, 최대 30초)")
             try:
-                login_button.wait_for(state="attached", timeout=3000)
-                page.wait_for_timeout(500)  # 추가 안정화 대기
+                page.wait_for_url(
+                    lambda url: "accounts/login" not in url and "/login" not in url,
+                    timeout=30000,
+                )
+                self.logger.info("로그인 성공 감지 (URL 변화 확인)")
             except Exception:
-                pass  # 대기 실패해도 계속 진행
-
-            # 로그인 버튼 클릭
-            self.logger.info("로그인 버튼 클릭 중...")
-            # 클릭 가능한지 확인 후 클릭
-            try:
-                if login_button.is_enabled():
-                    login_button.click()
-                    self.logger.info("로그인 버튼 클릭 완료")
-                else:
-                    # 버튼이 비활성화되어 있으면 내부 버튼 찾기 시도
-                    inner_button = login_button.locator("button").first
-                    if inner_button.is_visible():
-                        inner_button.click()
-                        self.logger.info("내부 버튼 클릭 완료")
-                    else:
-                        # 강제 클릭 시도
-                        login_button.click(force=True)
-                        self.logger.info("강제 클릭 완료")
-            except Exception as e:
-                self.logger.warning(f"일반 클릭 실패, 강제 클릭 시도: {e}")
-                login_button.click(force=True)
-                self.logger.info("강제 클릭 완료")
-
-            # 로그인 버튼 클릭 후 20초 대기 (브라우저에 아무것도 하지 않고 대기만)
-            self.logger.info("로그인 처리 대기 중... (20초, 브라우저 조작 없음)")
-            time.sleep(20)  # Python의 time.sleep 사용 (브라우저 응답을 기다리지 않음)
+                # URL 변화 없으면 현재 URL로 최종 판단
+                pass
 
             # 로그인 결과 확인 및 리다이렉트 감지
             try:
@@ -2423,6 +2316,13 @@ class InstagramReelsScraper:
         filepath = self.config.output_dir / filename
 
         try:
+            # S3 썸네일 아카이빙 (JSON/DB 저장 전 — S3 URL로 교체된 상태로 저장)
+            if S3_AVAILABLE:
+                archiver = build_archiver_from_config(self.config)
+                if archiver is not None:
+                    country = getattr(self.config, "country_code", None) or "unknown"
+                    data, _ = archiver.batch_archive(data, country_code=country)
+
             self.logger.info(f"데이터 저장 중: {filepath}")
             # Pydantic 모델을 dict로 변환
             data_dict = [item.model_dump(mode="json") for item in data]

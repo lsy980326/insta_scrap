@@ -25,7 +25,7 @@ Base = declarative_base()
 class Creator(Base):
     """크리에이터 정보 테이블"""
 
-    __tablename__ = "creators"
+    __tablename__ = "instagram_creators"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     username = Column(String(255), unique=True, nullable=False, index=True)
@@ -50,7 +50,7 @@ class Creator(Base):
 class Reel(Base):
     """릴스 기본 정보 테이블"""
 
-    __tablename__ = "reels"
+    __tablename__ = "instagram_reels"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     reel_id = Column(String(255), unique=True, nullable=False, index=True)  # Instagram 릴스 ID
@@ -82,10 +82,10 @@ class Reel(Base):
 class ReelMetric(Base):
     """릴스 통계 정보 테이블 (시계열 추적)"""
 
-    __tablename__ = "reel_metrics"
+    __tablename__ = "instagram_reel_metrics"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    reel_id = Column(BigInteger, ForeignKey("reels.id", ondelete="CASCADE"), nullable=False, index=True)
+    reel_id = Column(BigInteger, ForeignKey("instagram_reels.id", ondelete="CASCADE"), nullable=False, index=True)
     likes = Column(Integer, nullable=True)
     comments = Column(Integer, nullable=True)
     views = Column(Integer, nullable=True)
@@ -101,7 +101,7 @@ class ReelMetric(Base):
 class ScrapingSession(Base):
     """수집 세션 추적 테이블"""
 
-    __tablename__ = "scraping_sessions"
+    __tablename__ = "instagram_scraping_sessions"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     session_type = Column(String(50), nullable=False, index=True)  # 'collection' 또는 'tracking'
@@ -119,7 +119,7 @@ class ScrapingSession(Base):
 class AccountSession(Base):
     """인스타그램 계정 세션 정보 테이블 (쿠키 및 User-Agent 저장)"""
 
-    __tablename__ = "account_sessions"
+    __tablename__ = "instagram_account_sessions"
 
     account_id = Column(String(255), primary_key=True, nullable=False, index=True)  # Instagram username
     cookies = Column(JSON, nullable=False)  # Playwright 쿠키 형식

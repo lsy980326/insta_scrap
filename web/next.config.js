@@ -20,6 +20,10 @@ const nextConfig = {
         protocol: 'https',
         hostname: '**.instagram.com',
       },
+      {
+        protocol: 'https',
+        hostname: 'trendboard-mda.s3.ap-northeast-2.amazonaws.com',
+      },
     ],
     unoptimized: false, // Next.js 이미지 최적화 사용
   },

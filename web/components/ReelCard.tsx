@@ -72,25 +72,11 @@ export default function ReelCard({ reel, rank, onClick, formatNumber, formatDate
       <div className="relative w-full aspect-[9/16] bg-gray-700">
         {reel.thumbnail_url && !imageError ? (
           <img
-            src={reel.thumbnail_url}
+            src={`/api/image-proxy?url=${encodeURIComponent(reel.thumbnail_url)}`}
             alt={reel.title || 'Reel thumbnail'}
             className="w-full h-full object-cover"
-            onError={(e) => {
-              console.error('Image load error, trying proxy:', reel.thumbnail_url?.substring(0, 100))
-              // 직접 로드 실패 시 프록시로 재시도
-              const img = e.currentTarget
-              if (!img.src.includes('/api/image-proxy')) {
-                img.src = `/api/image-proxy?url=${encodeURIComponent(reel.thumbnail_url || '')}`
-              } else {
-                setImageError(true)
-              }
-            }}
-            onLoad={() => {
-              console.log('Image loaded successfully')
-            }}
+            onError={() => setImageError(true)}
             loading="lazy"
-            referrerPolicy="no-referrer"
-            crossOrigin="anonymous"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-500">

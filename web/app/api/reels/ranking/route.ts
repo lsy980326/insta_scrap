@@ -56,10 +56,10 @@ export async function GET(request: NextRequest) {
         latest_metric.comments,
         latest_metric.views,
         latest_metric.recorded_at
-      FROM reels r
+      FROM instagram_reels r
       LEFT JOIN LATERAL (
         SELECT likes, comments, views, recorded_at
-        FROM reel_metrics
+        FROM instagram_reel_metrics
         WHERE reel_id = r.id
         ${metricDateFilter}
         ORDER BY recorded_at DESC

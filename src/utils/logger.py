@@ -11,8 +11,8 @@ from loguru import logger
 def setup_logger(
     log_level: str = "INFO",
     log_file: Path | None = None,
-    rotation: str = "10 MB",
-    retention: str = "7 days",
+    rotation: str = "1 day",
+    retention: str = "30 days",
 ) -> None:
     """
     로거 설정
@@ -47,6 +47,7 @@ def setup_logger(
                     level=log_level,
                     rotation=rotation,
                     retention=retention,
+                    compression="zip",
                     encoding="utf-8",
                 )
         except (ValueError, OSError) as e:

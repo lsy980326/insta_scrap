@@ -27,6 +27,7 @@ if str(project_root) not in sys.path:
 
 try:
     from src.config import load_config
+    from src.profile_loader import load_profile
     from src.views_tracker import ReelViewsTracker
     from src.utils.logger import setup_logger, get_logger
 except ImportError as e:
@@ -46,8 +47,16 @@ except ImportError as e:
 
 def main() -> None:
     """메인 함수"""
-    # 설정 로드
-    config = load_config()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Instagram Reels 조회수 추적")
+    parser.add_argument("input_file", help="입력 JSON 파일 경로")
+    parser.add_argument("output_file", nargs="?", help="출력 JSON 파일 경로 (선택)")
+    parser.add_argument("--profile", "-p", help="계정 프로파일 (예: kr, jp)")
+    args = parser.parse_args()
+
+    # 설정 로드 (프로파일 우선)
+    config = load_profile(args.profile) if args.profile else load_config()
 
     # 로거 설정
     setup_logger(
@@ -60,17 +69,11 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("Instagram Reels 조회수 추적")
     logger.info("=" * 60)
+    if args.profile:
+        logger.info(f"프로파일: {args.profile} (계정: {config.instagram_username})")
 
-    # 명령행 인자 처리
-    if len(sys.argv) < 2:
-        print("\n사용법: python track_views.py <입력파일> [출력파일]")
-        print("\n예시:")
-        print("  python track_views.py output/reels_data_20260101_143155.json")
-        print("  python track_views.py output/reels_data_20260101_143155.json output/reels_with_views.json")
-        sys.exit(1)
-
-    input_file = Path(sys.argv[1])
-    output_file = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+    input_file = Path(args.input_file)
+    output_file = Path(args.output_file) if args.output_file else None
 
     # 입력 파일 존재 확인
     if not input_file.exists():

@@ -132,169 +132,81 @@ class ReelViewsTracker:
 
             page = self.browser_manager.get_page()
 
-            # 인스타그램 메인 페이지로 이동 (원래 방식대로)
-            self.logger.info("인스타그램 메인 페이지로 이동 중...")
-            page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=30000)
-
-            # 페이지가 완전히 로드될 때까지 대기
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=10000)
-            except Exception:
-                self.logger.debug("페이지 로드 대기 실패 (계속 진행)")
-
-            random_delay(1.0, 2.0)  # 사용자처럼 랜덤 대기
-
-            # 페이지 상호작용 시뮬레이션 (봇 감지 우회)
+            # ── 로그인 페이지 직접 접근 ──────────────────────────────────────
+            self.logger.info("로그인 페이지 직접 접근 중...")
+            page.goto(
+                "https://www.instagram.com/accounts/login/",
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            random_delay(1.5, 2.5)
             simulate_page_interaction(page, min_actions=1, max_actions=2)
 
-            # 로그인 링크 클릭 또는 로그인 폼 확인
-            self.logger.info("로그인 폼 확인 중...")
+            # 쿠키 수락 팝업 (있는 경우만)
             try:
-                # 이미 로그인되어 있는지 확인
-                if "accounts/login" not in page.url:
-                    # 로그인 링크 찾기
-                    login_link_selectors = [
-                        'a[href*="/accounts/login"]',
-                        'a:has-text("Log in")',
-                        'a:has-text("로그인")',
-                    ]
-
-                    login_link = None
-                    for selector in login_link_selectors:
-                        try:
-                            login_link = page.locator(selector).first
-                            if login_link.is_visible(timeout=3000):
-                                self.logger.info(f"로그인 링크 찾음: {selector}")
-                                login_link.click()
-                                try:
-                                    page.wait_for_load_state("domcontentloaded", timeout=5000)
-                                except Exception:
-                                    pass
-                                page.wait_for_timeout(2000)
-                                break
-                        except Exception:
-                            continue
-
-                # 로그인 폼이 나타날 때까지 대기
-                page.wait_for_selector("#loginForm", timeout=10000, state="visible")
-                self.logger.info("로그인 폼 로드 완료")
-            except Exception as e:
-                self.logger.warning(f"loginForm 셀렉터 대기 실패, 계속 진행: {e}")
-
-            # 추가 안정화 대기
-            page.wait_for_load_state("domcontentloaded")
-            page.wait_for_timeout(1000)
-
-            # 쿠키 수락 (있는 경우)
-            try:
-                accept_cookies = page.locator('button:has-text("Accept")').or_(
-                    page.locator('button:has-text("수락")')
-                )
-                if accept_cookies.count() > 0:
-                    accept_cookies.first.click()
-                    page.wait_for_timeout(1000)
-            except Exception:
-                pass  # 쿠키 버튼이 없을 수 있음
-
-            # 사용자명 입력 필드 찾기 및 입력
-            username_selectors = [
-                "#loginForm > div > div:nth-child(1) > div > label > input",
-                '#loginForm input[type="text"]',
-                'input[name="username"]',
-                'input[aria-label*="전화번호"]',
-                'input[aria-label*="사용자 이름"]',
-            ]
-
-            username_input = wait_for_element(
-                page, username_selectors, timeout=5000, description="사용자명 입력 필드"
-            )
-
-            if not username_input:
-                raise LoginError("사용자명 입력 필드를 찾을 수 없습니다.")
-
-            if not safe_fill_input(username_input, username, description="사용자명"):
-                raise LoginError("사용자명 입력에 실패했습니다.")
-
-            # 비밀번호 입력 필드 찾기 및 입력
-            password_selectors = [
-                "#loginForm > div > div:nth-child(2) > div > label > input",
-                '#loginForm input[type="password"]',
-                'input[name="password"]',
-                'input[type="password"]',
-            ]
-
-            password_input = wait_for_element(
-                page, password_selectors, timeout=5000, description="비밀번호 입력 필드"
-            )
-
-            if not password_input:
-                raise LoginError("비밀번호 입력 필드를 찾을 수 없습니다.")
-
-            if not safe_fill_input(password_input, password, description="비밀번호"):
-                raise LoginError("비밀번호 입력에 실패했습니다.")
-
-            # 로그인 버튼 찾기 및 클릭
-            login_button_selectors = [
-                "#loginForm > div > div:nth-child(3)",
-                "#loginForm > div > div:nth-child(3) button",
-                '#loginForm button[type="submit"]',
-                'button[type="submit"]',
-                'button:has-text("Log in")',
-                'button:has-text("로그인")',
-            ]
-
-            login_button = wait_for_element(
-                page, login_button_selectors, timeout=5000, description="로그인 버튼"
-            )
-
-            if not login_button:
-                raise LoginError("로그인 버튼을 찾을 수 없습니다.")
-
-            # 버튼이 활성화될 때까지 대기
-            self.logger.info("로그인 버튼 활성화 대기 중...")
-            try:
-                login_button.wait_for(state="attached", timeout=3000)
-                page.wait_for_timeout(500)
+                cookie_btn = page.locator(
+                    'button:has-text("Accept"), button:has-text("수락"), button:has-text("許可")'
+                ).first
+                if cookie_btn.is_visible(timeout=2000):
+                    cookie_btn.click()
+                    page.wait_for_timeout(800)
             except Exception:
                 pass
 
-            # 로그인 버튼 클릭
-            self.logger.info("로그인 버튼 클릭 중...")
+            # 로그인 폼 대기
             try:
-                if login_button.is_enabled():
-                    login_button.click()
-                    self.logger.info("로그인 버튼 클릭 완료")
-                else:
-                    inner_button = login_button.locator("button").first
-                    if inner_button.is_visible():
-                        inner_button.click()
-                        self.logger.info("내부 버튼 클릭 완료")
-                    else:
-                        login_button.click(force=True)
-                        self.logger.info("강제 클릭 완료")
-            except Exception as e:
-                self.logger.warning(f"일반 클릭 실패, 강제 클릭 시도: {e}")
-                login_button.click(force=True)
-                self.logger.info("강제 클릭 완료")
+                page.wait_for_selector(
+                    'input[autocomplete*="username"], input[type="text"]',
+                    timeout=15000,
+                    state="visible",
+                )
+            except Exception:
+                page.wait_for_selector("input", timeout=10000, state="visible")
 
-            # 로그인 버튼 클릭 후 대기
-            self.logger.info("로그인 처리 대기 중... (20초)")
-            time.sleep(20)  # Python의 time.sleep 사용
+            self.logger.info(f"로그인 페이지 로드 완료: {page.url}")
 
-            # 로그인 결과 확인
+            # ── 사용자명 입력 ──────────────────────────────────────────────
+            username_selectors = [
+                'input[autocomplete="username webauthn"]',
+                'input[autocomplete="username"]',
+                'input[type="text"]:visible',
+                'input:not([type="password"]):visible',
+            ]
+            username_input = wait_for_element(
+                page, username_selectors, timeout=10000, description="사용자명 입력 필드"
+            )
+            if not username_input:
+                raise LoginError("사용자명 입력 필드를 찾을 수 없습니다.")
+            if not safe_fill_input(username_input, username, description="사용자명"):
+                raise LoginError("사용자명 입력에 실패했습니다.")
+            page.wait_for_timeout(500)
+
+            # ── 비밀번호 입력 ──────────────────────────────────────────────
+            password_input = wait_for_element(
+                page,
+                ['input[type="password"]:visible', 'input[type="password"]'],
+                timeout=5000,
+                description="비밀번호 입력 필드",
+            )
+            if not password_input:
+                raise LoginError("비밀번호 입력 필드를 찾을 수 없습니다.")
+            if not safe_fill_input(password_input, password, description="비밀번호"):
+                raise LoginError("비밀번호 입력에 실패했습니다.")
+            page.wait_for_timeout(500)
+
+            # ── Enter 키로 제출 + URL 변화 감지 ───────────────────────────
+            self.logger.info("Enter 키로 로그인 제출 중...")
+            page.keyboard.press("Enter")
+
+            self.logger.info("로그인 처리 대기 중... (URL 변화 감지, 최대 30초)")
             try:
-                current_url = page.url
-                self.logger.info(f"현재 URL: {current_url}")
-
-                # 로그인 페이지에 여전히 있으면 경고만 출력
-                if "accounts/login" in current_url:
-                    self.logger.warning(
-                        "로그인 페이지에 여전히 있습니다. 로그인 실패 가능성이 있습니다."
-                    )
-                else:
-                    self.logger.info("로그인 성공으로 보입니다 (로그인 페이지가 아님)")
-            except Exception as e:
-                self.logger.warning(f"URL 가져오기 실패: {e}")
+                page.wait_for_url(
+                    lambda url: "accounts/login" not in url and "/login" not in url,
+                    timeout=30000,
+                )
+                self.logger.info("로그인 성공 감지 (URL 변화 확인)")
+            except Exception:
+                pass
 
             # 로그인 후 팝업 처리
             self._handle_post_login_popup(page)
@@ -570,14 +482,38 @@ class ReelViewsTracker:
             except Exception:
                 pass
 
-            # 로그인 상태 확인
+            # 로그인 상태 확인 — URL 리다이렉트 또는 인페이지 로그인 오버레이 감지
             current_url = page.url
-            if "accounts/login" in current_url or "/login" in current_url:
+            login_overlay = False
+            try:
+                # Instagram은 URL 유지하면서 로그인 오버레이를 띄우기도 함
+                login_overlay = page.locator(
+                    'input[name="username"], input[name="email"], a[href="/accounts/login/"]'
+                ).first.is_visible(timeout=1500)
+            except Exception:
+                pass
+            if "accounts/login" in current_url or "/login" in current_url or login_overlay:
                 self.logger.warning(
-                    f"크리에이터 '{creator_name}'의 reels 페이지 접근 시 로그인이 풀렸습니다. "
-                    "로그인 페이지로 리다이렉트되었습니다."
+                    f"크리에이터 '{creator_name}'의 reels 페이지 접근 시 로그인 리다이렉트 감지. 재로그인 시도..."
                 )
-                return metrics_dict
+                try:
+                    self._is_logged_in = False
+                    self.login()
+                    page.goto(
+                        reels_url,
+                        wait_until="domcontentloaded",
+                        timeout=30000,
+                        referer="https://www.instagram.com/",
+                    )
+                    time.sleep(1)
+                    current_url = page.url
+                    if "accounts/login" in current_url or "/login" in current_url:
+                        self.logger.error(f"재로그인 후에도 로그인 페이지입니다. '{creator_name}' 건너뜁니다.")
+                        return metrics_dict
+                    self.logger.info("재로그인 성공, 계속 진행합니다.")
+                except Exception as e:
+                    self.logger.error(f"재로그인 실패: {e}. '{creator_name}' 건너뜁니다.")
+                    return metrics_dict
 
             self.logger.info(f"크리에이터 '{creator_name}'의 reels 페이지에서 조회수 추출 중...")
 
@@ -817,14 +753,14 @@ class ReelViewsTracker:
 
             self.logger.info(f"총 {len(reels)}개 릴스 데이터 로드 완료")
 
-            # 브라우저 시작 (로그인되지 않은 경우)
-            if self.browser_manager is None:
-                self.browser_manager = BrowserManager(self.config)
-                self.browser_manager.start()
+            # 브라우저 시작 + 로그인 (로그인 안 된 경우 모두 포함)
+            if not self._is_logged_in:
+                if self.browser_manager is None:
+                    self.browser_manager = BrowserManager(self.config)
+                    self.browser_manager.start()
 
-                # 로그인 정보가 있으면 자동 로그인 시도
                 if self.config.instagram_username and self.config.instagram_password:
-                    self.logger.info("로그인 정보가 있습니다. 로그인을 시도합니다...")
+                    self.logger.info("로그인 시도 중...")
                     try:
                         self.login()
                         self.logger.info("로그인 성공! 조회수 추적을 시작합니다.")

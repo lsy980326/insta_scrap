@@ -11,7 +11,7 @@ export async function GET(
     // reel_id로 릴스 찾기
     const reelQuery = `
       SELECT id, reel_id, link, thumbnail_url, author, creator_profile_image, title, music
-      FROM reels
+      FROM instagram_reels
       WHERE reel_id = $1
     `
     const reelResult = await pool.query(reelQuery, [reelId])
@@ -36,7 +36,7 @@ export async function GET(
         comments,
         views,
         recorded_at
-      FROM reel_metrics
+      FROM instagram_reel_metrics
       WHERE reel_id = $1
       ORDER BY recorded_at DESC
       LIMIT 100
