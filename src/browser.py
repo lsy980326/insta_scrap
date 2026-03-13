@@ -154,16 +154,24 @@ class BrowserManager:
             self.page = self.context.new_page()
             self.page.set_default_timeout(self.config.playwright_timeout)
 
-            # 비디오 파일 차단 (썸네일/이미지는 허용, 영상 스트림만 차단)
-            # SwiftShader(소프트웨어 렌더링) 환경에서 비디오 디코딩이 CPU를 과도하게 사용하는 것을 방지
-            def _block_video(route):
+            # 불필요한 리소스 차단 (CPU/네트워크 절감)
+            # - 비디오: SwiftShader 소프트웨어 렌더링 CPU 과부하 방지
+            # - 폰트: 데이터 수집에 불필요
+            # - 트래킹/광고: 수집과 무관
+            _BLOCK_EXTENSIONS = (".mp4", ".m4v", ".webm", ".m3u8", ".ts", ".woff2", ".woff", ".ttf", ".otf")
+            _BLOCK_DOMAINS = ("google-analytics.com", "googletagmanager.com", "facebook.com/tr",
+                              "scorecardresearch.com", "doubleclick.net", "googlesyndication.com")
+
+            def _block_unnecessary(route):
                 url = route.request.url.lower()
-                if any(ext in url for ext in [".mp4", ".m4v", ".webm", ".m3u8", ".ts"]):
+                if any(ext in url for ext in _BLOCK_EXTENSIONS):
+                    route.abort()
+                elif any(domain in url for domain in _BLOCK_DOMAINS):
                     route.abort()
                 else:
                     route.continue_()
 
-            self.page.route("**/*", _block_video)
+            self.page.route("**/*", _block_unnecessary)
 
             # 강화된 WebDriver 속성 제거 및 스텔스 모드 (봇 감지 우회)
             self.page.add_init_script(

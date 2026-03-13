@@ -661,32 +661,23 @@ class InstagramReelsScraper:
                 'nav span:has-text("Reels")',
             ]
 
-            # 유틸리티 함수로 요소 찾기
-            reels_tab = wait_for_element(
-                page, reels_tab_selectors, timeout=10000, description="릴스 탭"
-            )
-
-            if not reels_tab:
-                raise ScrapingError("릴스 탭을 찾을 수 없습니다.")
-
-            # 릴스 탭 클릭
-            self.logger.info("릴스 탭 클릭 중...")
-            reels_tab.click()
+            # 직접 URL 이동 (탭 요소 탐색/클릭 불필요 → ~13초 절감)
+            self.logger.info("릴스 페이지 직접 이동 중...")
             try:
-                page.wait_for_load_state("domcontentloaded", timeout=10000)
+                page.goto(
+                    "https://www.instagram.com/reels/",
+                    wait_until="domcontentloaded",
+                    timeout=15000,
+                )
             except Exception:
-                self.logger.debug("릴스 탭 로드 대기 실패 (계속 진행)")
-            time.sleep(2)  # Python time.sleep 사용
-            random_delay(1.0, 2.0)
+                self.logger.debug("domcontentloaded 대기 실패 (계속 진행)")
 
-            # 릴스 페이지 로딩 확인
             current_url = page.url
             if "/reels" in current_url:
                 self.logger.info(f"릴스 탭으로 이동 완료: {current_url}")
                 return True
             else:
                 self.logger.warning(f"릴스 탭 이동 후 URL 확인 필요: {current_url}")
-                # URL이 변경되지 않았더라도 요소를 찾았으므로 성공으로 간주
                 return True
 
         except Exception as e:
@@ -702,7 +693,7 @@ class InstagramReelsScraper:
         """
         try:
             self.logger.info("릴스 페이지 로딩 대기 중...")
-            time.sleep(3)  # 초기 로딩 대기
+            time.sleep(1)  # 초기 로딩 대기 (비디오 차단으로 단축)
 
             # 릴스 컨테이너가 나타날 때까지 대기
             reels_container_selectors = [
@@ -721,7 +712,7 @@ class InstagramReelsScraper:
                     continue
 
             # 추가 안정화 대기
-            time.sleep(2)
+            time.sleep(1)
             # 일부 환경에서 페이지가 확대된 것처럼 보이면서(줌/레이아웃) 액션바가 화면 밖으로 밀리는 경우가 있음.
             # - 브라우저 줌을 리셋(Meta+0) 시도
             # - DOM zoom을 낮춰(80%) 액션바가 화면 안으로 들어오게 유도
