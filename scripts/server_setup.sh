@@ -102,8 +102,9 @@ sudo tee "$CRON_FILE" > /dev/null <<EOF
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin:/home/ubuntu/.local/bin
 
-# 매일 06:00 조회수 추적 (1회)
-0 6 * * * $SERVICE_USER cd $PROJECT_DIR && /home/ubuntu/.local/bin/poetry run python track_views.py output/$PROFILE/\$(date +\\%Y\\%m\\%d)*.json --profile $PROFILE > /dev/null 2>&1
+# 매일 12:00, 00:00 조회수 추적 (2회)
+0 12 * * * $SERVICE_USER cd $PROJECT_DIR && /home/ubuntu/.local/bin/poetry run python track_views.py output/$PROFILE/\$(date +\\%Y\\%m\\%d)*.json --profile $PROFILE > /dev/null 2>&1
+0 0 * * * $SERVICE_USER cd $PROJECT_DIR && /home/ubuntu/.local/bin/poetry run python track_views.py output/$PROFILE/\$(date +\\%Y\\%m\\%d)*.json --profile $PROFILE > /dev/null 2>&1
 
 # 매시간 헬스체크 (Slack 상태 전송)
 0 * * * * $SERVICE_USER cd $PROJECT_DIR && /home/ubuntu/.local/bin/poetry run python scripts/health_check.py --profile $PROFILE > /dev/null 2>&1
