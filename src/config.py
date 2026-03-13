@@ -85,6 +85,7 @@ class ScrapingConfig(BaseSettings):
 
     # 알림 설정
     slack_webhook_url: str | None = Field(default=None, description="Slack Incoming Webhook URL")
+    sentry_dsn: str | None = Field(default=None, description="Sentry DSN (없으면 Sentry 비활성화)")
 
     # S3 썸네일 아카이빙 설정
     s3_enabled: bool = Field(default=False, description="S3 썸네일 저장 사용 여부")

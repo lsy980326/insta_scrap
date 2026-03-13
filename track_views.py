@@ -31,6 +31,7 @@ try:
     from src.views_tracker import ReelViewsTracker
     from src.utils.logger import setup_logger, get_logger
     from src.utils.notifier import get_notifier
+    from src.utils.sentry import capture_exception, init_sentry
 except ImportError as e:
     print("=" * 60)
     print("오류: 필요한 모듈을 찾을 수 없습니다.")
@@ -70,6 +71,7 @@ def main() -> None:
     logger = get_logger(__name__)
     profile = args.profile or "unknown"
     notifier = get_notifier(config)
+    init_sentry(config.sentry_dsn, profile=profile)
 
     logger.info("=" * 60)
     logger.info("Instagram Reels 조회수 추적")
@@ -105,6 +107,7 @@ def main() -> None:
                     logger.info("로그인 성공!")
                 except Exception as e:
                     logger.warning(f"로그인 실패: {e}")
+                    capture_exception(e, event="login_failed")
                     if notifier:
                         notifier.send_login_error(profile, str(e))
                     logger.warning("로그인 없이 계속 진행합니다. 일부 크리에이터의 reels 페이지는 접근할 수 없을 수 있습니다.")
@@ -126,6 +129,7 @@ def main() -> None:
             logger.info("\n사용자에 의해 중단되었습니다.")
         except Exception as e:
             logger.error(f"조회수 추적 중 오류 발생: {e}")
+            capture_exception(e, event="tracking_error")
             if notifier:
                 notifier._post(f"❌ *[{profile.upper()}] 추적 오류*\n```{str(e)[:300]}```")
             raise

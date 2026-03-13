@@ -23,6 +23,7 @@ try:
     from src.scraper import InstagramReelsScraper
     from src.utils.logger import get_logger, setup_logger
     from src.utils.notifier import get_notifier
+    from src.utils.sentry import capture_exception, init_sentry
 except ImportError as e:
     print("=" * 60)
     print("오류: 필요한 모듈을 찾을 수 없습니다.")
@@ -76,6 +77,7 @@ def main() -> None:
     logger = get_logger(__name__)
     profile = args.profile or "unknown"
     notifier = get_notifier(config)
+    init_sentry(config.sentry_dsn, profile=profile)
 
     logger.info("=" * 50)
     logger.info("Instagram Reels Scraper")
@@ -100,6 +102,7 @@ def main() -> None:
                 scraper.login()
             except Exception as e:
                 logger.error(f"로그인 실패: {e}")
+                capture_exception(e, event="login_failed")
                 if notifier:
                     notifier.send_login_error(profile, str(e))
                 raise
@@ -126,6 +129,7 @@ def main() -> None:
         logger.info("\n사용자에 의해 수집이 중단되었습니다.")
     except Exception as e:
         logger.error(f"오류 발생: {e}")
+        capture_exception(e, event="collection_error")
         if notifier and "login" not in str(type(e).__name__).lower():
             notifier._post(f"❌ *[{profile.upper()}] 수집 오류*\n```{str(e)[:300]}```")
         raise
