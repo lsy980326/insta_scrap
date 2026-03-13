@@ -1442,48 +1442,39 @@ class InstagramReelsScraper:
             except Exception as e:
                 self.logger.debug(f"프로필 사진 추출 실패: {e}")
 
-            # 제목 추출 - 제공된 HTML 구조 기반
+            # 제목 추출
+            # 캡션 span: x6ikm8r x10wlt62 xuxw1ft (xlyipyv 없음)
+            # 음악 span: x6ikm8r x10wlt62 xlyipyv xuxw1ft (xlyipyv 있음) → :not(.xlyipyv)로 제외
             try:
-
-                # 방법 1: page 전체에서 visible한 캡션 div 탐색
-                # DOM: div[role="presentation"] > div[role="button"] > div > div[dir="auto"] > span
-                # root 범위 밖(카드 외부)에 캡션이 위치할 수 있으므로 page 기준으로 탐색
+                # 방법 1: root 범위에서 캡션 span 직접 선택 (음악 span 제외)
                 try:
-                    caption_divs = page.locator('div[role="presentation"] div[dir="auto"]').all()
-                    for cdiv in caption_divs[:10]:
+                    caption_spans = root.locator('span.x6ikm8r.x10wlt62.xuxw1ft:not(.xlyipyv)').all()
+                    for span in caption_spans[:10]:
                         try:
-                            if not cdiv.is_visible(timeout=300):
-                                continue
-                            title_text = cdiv.text_content() or ""
-                            title_text = title_text.strip()
-                            # "더 보기" 같은 UI 텍스트 제거
-                            title_text = re.sub(r'\s*(더 보기|more|show more)\s*$', '', title_text, flags=re.IGNORECASE).strip()
-                            if (len(title_text) > 5 and len(title_text) < 500 and
-                                title_text != reel_data.author and
-                                not title_text.startswith('@') and
-                                not re.match(r'^[\d,]+$', title_text)):
+                            title_text = (span.text_content() or "").strip()
+                            if title_text and len(title_text) > 1:
                                 reel_data.title = title_text
-                                self.logger.info(f"제목: {reel_data.title[:50]}...")
+                                self.logger.info(f"제목(캡션): {title_text[:60]!r}")
                                 break
                         except Exception:
                             continue
                 except Exception:
                     pass
 
-                # 방법 2: root 범위 내 div[dir="auto"] 직접 자식 span (백업)
+                # 방법 2: div[dir="auto"] > span 구조로 탐색 (방법 1 실패 시)
                 if not reel_data.title:
                     try:
-                        title_spans = root.locator('div[dir="auto"] > span.x6ikm8r.x10wlt62.xuxw1ft').all()
-                        for span in title_spans[:5]:
+                        divs = root.locator('div[dir="auto"]').all()
+                        for div in divs[:20]:
                             try:
-                                title_text = span.text_content() or ""
-                                title_text = title_text.strip()
-                                if (len(title_text) > 5 and len(title_text) < 500 and
-                                    title_text != reel_data.author and
-                                    not title_text.startswith('@') and
-                                    not re.match(r'^[\d,]+$', title_text)):
-                                    reel_data.title = title_text
-                                    self.logger.info(f"제목 (백업): {reel_data.title[:50]}...")
+                                # 오디오 링크 내부 div는 건너뜀
+                                in_audio = div.evaluate("el => !!el.closest('a[href*=\"/reels/audio/\"]')")
+                                if in_audio:
+                                    continue
+                                text = (div.text_content() or "").strip()
+                                if text and len(text) > 1:
+                                    reel_data.title = text
+                                    self.logger.info(f"제목(div[dir=auto]): {text[:60]!r}")
                                     break
                             except Exception:
                                 continue
