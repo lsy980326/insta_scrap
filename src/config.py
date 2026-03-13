@@ -52,12 +52,15 @@ class ScrapingConfig(BaseSettings):
 
     # 스크래핑 제한
     max_reels: int | None = Field(default=None, ge=1, description="최대 수집 개수")
+    scrape_run_minutes: int | None = Field(
+        default=None, ge=1, description="수집 최대 실행 시간 (분). systemd RestartSec와 조합해 burst credit 회복"
+    )
     request_delay: float = Field(default=2.0, ge=0.0, description="요청 간 딜레이 (초)")
 
-    @field_validator("max_reels", mode="before")
+    @field_validator("max_reels", "scrape_run_minutes", mode="before")
     @classmethod
-    def validate_max_reels(cls, v: any) -> int | None:  # noqa: ANN001
-        """max_reels 빈 문자열 처리"""
+    def validate_nullable_int(cls, v: any) -> int | None:  # noqa: ANN001
+        """int | None 필드 빈 문자열 처리"""
         if v == "" or v is None:
             return None
         if isinstance(v, str):

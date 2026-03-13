@@ -2044,7 +2044,17 @@ class InstagramReelsScraper:
             max_consecutive_duplicates = 10  # 연속 중복 N개 이상이면 피드 루프로 판단, 종료
             last_poster: str | None = None  # 릴스 전환 감지용 (DOM/카운트 갱신 안정화)
 
+            # 실행 시간 제한 (burst credit 회복용)
+            run_deadline: float | None = None
+            if self.config.scrape_run_minutes:
+                run_deadline = time.time() + self.config.scrape_run_minutes * 60
+                self.logger.info(f"⏱️ 수집 시간 제한: {self.config.scrape_run_minutes}분 후 종료 (burst credit 회복)")
+
             while True:
+                # 실행 시간 초과 시 정상 종료 (systemd가 RestartSec 대기 후 재시작)
+                if run_deadline and time.time() > run_deadline:
+                    self.logger.info(f"⏱️ 수집 시간 {self.config.scrape_run_minutes}분 경과 — 정상 종료 (크레딧 회복 대기 중)")
+                    break
                 try:
                     # 릴스 전환 직후 DOM이 재사용/지연 갱신되는 경우가 있어,
                     # video poster가 바뀔 때까지 짧게 기다린 뒤 수집한다.
