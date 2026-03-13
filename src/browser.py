@@ -91,6 +91,7 @@ class BrowserManager:
                 "--enable-automation=false",  # 자동화 비활성화
                 # SwiftShader CPU 부하 감소 (헤드리스 Linux 렌더링 최적화)
                 # 주의: gpu-compositing/threaded-compositing 비활성화는 마우스 휠 데드락 유발 → 제외
+                "--disable-gpu",                       # GPU 프로세스(SwiftShader) 자체 비활성화
                 "--disable-accelerated-video-decode",  # HW 비디오 디코딩 비활성화
                 "--disable-accelerated-video-encode",  # HW 비디오 인코딩 비활성화
                 "--num-raster-threads=1",              # 래스터화 스레드 1개로 제한
