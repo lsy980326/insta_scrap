@@ -61,6 +61,7 @@ class Reel(Base):
     title = Column(Text, nullable=True)
     music = Column(Text, nullable=True)
     country_code = Column(String(10), nullable=True, index=True)  # 수집 계정(프로파일) 기준 국가 (예: kr, jp)
+    collected_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False, index=True)  # 스크래퍼 수집 시각
     created_at = Column(TIMESTAMP, default=func.current_timestamp(), nullable=False)
     updated_at = Column(TIMESTAMP, default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
 
