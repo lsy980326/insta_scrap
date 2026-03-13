@@ -87,18 +87,21 @@ class ThumbnailArchiver:
         for reel in reels:
             reel_id = _extract_reel_id(str(reel.link)) if reel.link else None
 
-            # 썸네일
-            if reel.thumbnail and reel_id:
+            # 썸네일 — 이미 S3 URL이면 스킵 (재업로드 시 비공개 버킷 403 방지)
+            if reel.thumbnail and reel_id and self._base_url not in str(reel.thumbnail):
                 new_url = self.archive_reel_thumbnail(reel_id, reel.thumbnail, country_code)
                 if new_url != reel.thumbnail:
                     reel.thumbnail = new_url
                     success += 1
 
-            # 프로필 이미지 (크리에이터별 1회만)
+            # 프로필 이미지 (크리에이터별 1회만, 이미 S3 URL이면 스킵)
             if reel.creator_profile_image and reel.author:
                 if reel.author not in seen_authors:
-                    new_url = self.archive_profile_image(reel.author, reel.creator_profile_image)
-                    seen_authors[reel.author] = new_url
+                    if self._base_url not in str(reel.creator_profile_image):
+                        new_url = self.archive_profile_image(reel.author, reel.creator_profile_image)
+                        seen_authors[reel.author] = new_url
+                    else:
+                        seen_authors[reel.author] = reel.creator_profile_image
                 reel.creator_profile_image = seen_authors[reel.author]
 
         logger.info(f"[S3] 썸네일 아카이빙 완료: {success}/{len(reels)}건 성공 (country={country_code})")
