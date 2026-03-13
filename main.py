@@ -22,6 +22,7 @@ try:
     from src.profile_loader import list_profiles, load_profile
     from src.scraper import InstagramReelsScraper
     from src.utils.logger import get_logger, setup_logger
+    from src.utils.notifier import get_notifier
 except ImportError as e:
     print("=" * 60)
     print("오류: 필요한 모듈을 찾을 수 없습니다.")
@@ -73,6 +74,8 @@ def main() -> None:
     )
 
     logger = get_logger(__name__)
+    profile = args.profile or "unknown"
+    notifier = get_notifier(config)
 
     logger.info("=" * 50)
     logger.info("Instagram Reels Scraper")
@@ -83,6 +86,9 @@ def main() -> None:
                     f"(locale={config.browser_locale}, tz={config.browser_timezone})")
     logger.info(f"계정: {config.instagram_username}")
 
+    import time
+    start_time = time.time()
+
     try:
         # 스크래퍼 인스턴스 생성
         scraper = InstagramReelsScraper(config=config)
@@ -90,13 +96,28 @@ def main() -> None:
         # 로그인 정보가 있으면 자동 로그인 및 릴스 탭 이동
         if config.instagram_username and config.instagram_password:
             logger.info("로그인 정보가 설정되어 있습니다. 로그인을 시도합니다...")
-            scraper.login()
+            try:
+                scraper.login()
+            except Exception as e:
+                logger.error(f"로그인 실패: {e}")
+                if notifier:
+                    notifier.send_login_error(profile, str(e))
+                raise
             logger.info("로그인 성공! 릴스 탭까지 이동 완료.")
 
             # 릴스 수집 시작
             logger.info("릴스 수집을 시작합니다...")
             logger.info("수집을 중단하려면 Ctrl+C를 누르세요.")
             scraper.start_collecting_reels()
+
+            # 수집 완료 알림
+            duration = int(time.time() - start_time)
+            collect_count = len(scraper.collected_reels) if hasattr(scraper, "collected_reels") else 0
+            if notifier:
+                if collect_count == 0:
+                    notifier.send_zero_collect(profile)
+                else:
+                    notifier.send_summary(profile, collect_count, duration)
         else:
             logger.warning("로그인 정보가 없습니다. 로그인 후 수집을 시작할 수 없습니다.")
             logger.info("프로그램이 종료되었습니다.")
@@ -105,6 +126,8 @@ def main() -> None:
         logger.info("\n사용자에 의해 수집이 중단되었습니다.")
     except Exception as e:
         logger.error(f"오류 발생: {e}")
+        if notifier and "login" not in str(type(e).__name__).lower():
+            notifier._post(f"❌ *[{profile.upper()}] 수집 오류*\n```{str(e)[:300]}```")
         raise
     finally:
         # 브라우저를 열어둔 채로 종료 (수동으로 닫을 수 있도록)

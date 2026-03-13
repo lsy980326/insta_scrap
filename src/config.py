@@ -83,6 +83,9 @@ class ScrapingConfig(BaseSettings):
     db_pool_size: int = Field(default=5, ge=1, description="데이터베이스 연결 풀 크기")
     db_max_overflow: int = Field(default=10, ge=0, description="데이터베이스 최대 오버플로우")
 
+    # 알림 설정
+    slack_webhook_url: str | None = Field(default=None, description="Slack Incoming Webhook URL")
+
     # S3 썸네일 아카이빙 설정
     s3_enabled: bool = Field(default=False, description="S3 썸네일 저장 사용 여부")
     s3_bucket: str | None = Field(default=None, description="S3 버킷명")

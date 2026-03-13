@@ -30,6 +30,7 @@ try:
     from src.profile_loader import load_profile
     from src.views_tracker import ReelViewsTracker
     from src.utils.logger import setup_logger, get_logger
+    from src.utils.notifier import get_notifier
 except ImportError as e:
     print("=" * 60)
     print("오류: 필요한 모듈을 찾을 수 없습니다.")
@@ -67,6 +68,8 @@ def main() -> None:
     )
 
     logger = get_logger(__name__)
+    profile = args.profile or "unknown"
+    notifier = get_notifier(config)
 
     logger.info("=" * 60)
     logger.info("Instagram Reels 조회수 추적")
@@ -86,6 +89,9 @@ def main() -> None:
     if output_file:
         logger.info(f"출력 파일: {output_file}")
 
+    import time
+    start_time = time.time()
+
     try:
         # 트래커 생성
         tracker = ReelViewsTracker(config=config)
@@ -99,21 +105,29 @@ def main() -> None:
                     logger.info("로그인 성공!")
                 except Exception as e:
                     logger.warning(f"로그인 실패: {e}")
+                    if notifier:
+                        notifier.send_login_error(profile, str(e))
                     logger.warning("로그인 없이 계속 진행합니다. 일부 크리에이터의 reels 페이지는 접근할 수 없을 수 있습니다.")
             else:
                 logger.warning("로그인 정보가 없습니다. 일부 크리에이터의 reels 페이지는 접근할 수 없을 수 있습니다.")
 
             # 조회수 추적 실행
             result_file = tracker.track_views(input_file, output_file)
+            duration = int(time.time() - start_time)
             logger.info("=" * 60)
             logger.info(f"조회수 추적 완료!")
             logger.info(f"결과 파일: {result_file}")
             logger.info("=" * 60)
+            if notifier:
+                tracked_count = getattr(tracker, "tracked_count", 0)
+                notifier.send_track_summary(profile, tracked_count, duration)
 
         except KeyboardInterrupt:
             logger.info("\n사용자에 의해 중단되었습니다.")
         except Exception as e:
             logger.error(f"조회수 추적 중 오류 발생: {e}")
+            if notifier:
+                notifier._post(f"❌ *[{profile.upper()}] 추적 오류*\n```{str(e)[:300]}```")
             raise
         finally:
             # 브라우저 종료

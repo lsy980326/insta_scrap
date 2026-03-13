@@ -100,6 +100,9 @@ PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 # 매일 06:00 조회수 추적
 0 6 * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python track_views.py output/$PROFILE/\$(date +\\%Y\\%m\\%d)*.json --profile $PROFILE > /dev/null 2>&1
 
+# 매시간 헬스체크 (NordVPN, DB, 수집 건수, 디스크)
+0 * * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python scripts/health_check.py --profile $PROFILE > /dev/null 2>&1
+
 # 매주 일요일 03:00 output JSON 30일 이상, 압축 로그 10일 이상 삭제
 0 3 * * 0 $SERVICE_USER find $PROJECT_DIR/output -name "*.json" -mtime +30 -delete
 0 3 * * 0 $SERVICE_USER find $PROJECT_DIR/logs -name "*.zip" -mtime +10 -delete
