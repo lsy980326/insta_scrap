@@ -85,23 +85,28 @@ sudo systemctl enable nordvpn-autoconnect.service
 sudo nordvpn connect "$VPN_NODE" || echo "VPN 연결 실패 (로그인 여부 확인 필요)"
 echo "NordVPN 자동 연결 설정 완료"
 
-# ── 7. Cron 등록 ──────────────────────────────────────────────────
-echo "[7/7] Cron 등록 중..."
+# ── 7. systemd 수집 서비스 등록 (24/7 자동 재시작) ──────────────────
+echo "[7/7] 수집 서비스 등록 중..."
+sudo cp "$PROJECT_DIR/scripts/insta-scraper@.service" /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable "insta-scraper@$PROFILE.service"
+sudo systemctl start "insta-scraper@$PROFILE.service"
+echo "수집 서비스 등록 완료: insta-scraper@$PROFILE.service"
+
+# ── 7.5. Cron 등록 (추적 + 헬스체크 + 정리) ───────────────────────
+echo "[7.5] Cron 등록 중..."
 CRON_FILE="/etc/cron.d/insta-scraper-$PROFILE"
 
 sudo tee "$CRON_FILE" > /dev/null <<EOF
 # Instagram Scraper - $PROFILE
 SHELL=/bin/bash
-PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
+PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin:/home/ubuntu/.local/bin
 
-# 매일 02:00 릴스 수집 (로그는 loguru가 logs/scraper.log에 기록)
-0 2 * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python main.py --profile $PROFILE > /dev/null 2>&1
+# 매일 06:00 조회수 추적 (1회)
+0 6 * * * $SERVICE_USER cd $PROJECT_DIR && /home/ubuntu/.local/bin/poetry run python track_views.py output/$PROFILE/\$(date +\\%Y\\%m\\%d)*.json --profile $PROFILE > /dev/null 2>&1
 
-# 매일 06:00 조회수 추적
-0 6 * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python track_views.py output/$PROFILE/\$(date +\\%Y\\%m\\%d)*.json --profile $PROFILE > /dev/null 2>&1
-
-# 매시간 헬스체크 (NordVPN, DB, 수집 건수, 디스크)
-0 * * * * $SERVICE_USER cd $PROJECT_DIR && poetry run python scripts/health_check.py --profile $PROFILE > /dev/null 2>&1
+# 매시간 헬스체크 (Slack 상태 전송)
+0 * * * * $SERVICE_USER cd $PROJECT_DIR && /home/ubuntu/.local/bin/poetry run python scripts/health_check.py --profile $PROFILE > /dev/null 2>&1
 
 # 매주 일요일 03:00 output JSON 30일 이상, 압축 로그 10일 이상 삭제
 0 3 * * 0 $SERVICE_USER find $PROJECT_DIR/output -name "*.json" -mtime +30 -delete
@@ -132,11 +137,13 @@ echo "  셋업 완료!"
 echo "======================================================"
 echo ""
 echo "  다음 단계:"
-echo "  1. .env 파일 확인 (DB, S3 설정)"
+echo "  1. .env 파일 확인 (DB, S3, SLACK_WEBHOOK_URL 설정)"
 echo "  2. accounts.yaml의 '$PROFILE' 계정 정보 확인"
 echo "  3. VPN 연결 확인: nordvpn status"
-echo "  4. 수동 1회 실행 테스트:"
-echo "     cd $PROJECT_DIR && poetry run python main.py --profile $PROFILE"
+echo "  4. 수집 서비스 상태 확인:"
+echo "     sudo systemctl status insta-scraper@$PROFILE"
+echo "  5. 로그 실시간 확인:"
+echo "     tail -f $PROJECT_DIR/logs/scraper.log"
 echo ""
 echo "  현재 VPN 상태:"
 nordvpn status 2>/dev/null || echo "  (nordvpn 명령 실패 - 설치 확인 필요)"

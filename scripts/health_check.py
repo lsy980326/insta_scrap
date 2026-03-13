@@ -98,36 +98,50 @@ def main() -> None:
     logger.info(f"[{profile.upper()}] 헬스체크 시작")
 
     # 1. NordVPN
-    if not check_nordvpn(profile):
+    vpn_ok = check_nordvpn(profile)
+    if not vpn_ok:
         issues.append("NordVPN 연결 끊김")
         if notifier:
             notifier._post(f"⚠️ *[{profile.upper()}] NordVPN 연결 끊김*\n`nordvpn connect` 수동 실행 필요")
 
     # 2. DB 연결
-    if not check_db(config):
+    db_ok = check_db(config)
+    if not db_ok:
         issues.append("DB 연결 실패")
         if notifier:
             notifier.send_db_error(profile, "헬스체크 DB ping 실패")
 
-    # 3. 오늘 수집 건수 (cron 수집 시간 이후인 03:00 UTC+ 이후에만 의미 있음)
-    now_hour = datetime.now(tz=timezone.utc).hour
-    if now_hour >= 3:  # 한국 기준 12시 이후
-        count = check_today_collect(config, profile)
-        if count == 0:
-            issues.append("오늘 수집 0건")
-            if notifier:
-                notifier.send_zero_collect(profile)
-        elif count > 0:
-            logger.info(f"[{profile.upper()}] 오늘 수집 건수: {count}건")
+    # 3. 오늘 수집 건수
+    count = check_today_collect(config, profile)
+    if count == 0:
+        issues.append("오늘 수집 0건")
+        if notifier:
+            notifier.send_zero_collect(profile)
 
     # 4. 디스크 용량
     disk_path = "/srv/insta_scrap" if Path("/srv/insta_scrap").exists() else str(project_root)
     used_pct = check_disk(disk_path)
-    logger.info(f"[{profile.upper()}] 디스크 사용률: {used_pct:.1f}%")
     if used_pct >= DISK_WARN_PCT:
         issues.append(f"디스크 {used_pct:.1f}%")
         if notifier:
             notifier.send_disk_warning(profile, used_pct)
+
+    # 매시간 Slack 상태 요약 전송
+    from src.utils.notifier import _flag
+    status = "🔴 이상" if issues else "🟢 정상"
+    detail_lines = [
+        f"VPN: {'✅' if vpn_ok else '❌'}",
+        f"DB: {'✅' if db_ok else '❌'}",
+        f"오늘 수집: {count}건",
+        f"디스크: {used_pct:.1f}%",
+    ]
+    if issues:
+        detail_lines.append(f"이상: {', '.join(issues)}")
+    if notifier:
+        notifier._post(
+            f"{_flag(profile)} *[{profile.upper()}] 헬스체크 {status}*\n"
+            + "\n".join(detail_lines)
+        )
 
     if issues:
         logger.warning(f"[{profile.upper()}] 헬스체크 이상 감지: {', '.join(issues)}")

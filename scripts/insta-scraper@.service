@@ -1,0 +1,17 @@
+[Unit]
+Description=Instagram Reels Scraper (%i)
+After=network.target nordvpnd.service
+Wants=nordvpnd.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/srv/insta_scrap
+ExecStart=/home/ubuntu/.local/bin/poetry run python main.py --profile %i
+Restart=always
+RestartSec=60
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target
