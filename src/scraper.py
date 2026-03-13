@@ -1002,7 +1002,7 @@ class InstagramReelsScraper:
                 for attempt in range(5):
                     btn = current_scope.locator(xpath_expr).first
                     try:
-                        if btn.is_visible(timeout=300):
+                        if btn.is_visible(timeout=50):
                             return btn, attempt
                     except Exception:
                         pass
@@ -1033,15 +1033,25 @@ class InstagramReelsScraper:
                     return None
 
             def _extract_count_from_button(button, kind: str) -> tuple[int | None, int, int]:
-                spans = button.locator("span.html-span.x1vvkbs, span.x1vvkbs").all()
-                if not spans:
-                    spans = button.locator("span").all()
+                try:
+                    texts = button.locator("span.html-span.x1vvkbs, span.x1vvkbs").evaluate_all(
+                        "els => els.slice(0, 80).map(el => el.textContent || '')"
+                    )
+                except Exception:
+                    texts = []
+                if not texts:
+                    try:
+                        texts = button.locator("span").evaluate_all(
+                            "els => els.slice(0, 80).map(el => el.textContent || '')"
+                        )
+                    except Exception:
+                        texts = []
 
-                total = len(spans)
+                total = len(texts)
                 scanned = 0
-                for span in spans[:80]:
+                for txt in texts:
                     scanned += 1
-                    txt = (span.text_content() or "").strip()
+                    txt = (txt or "").strip()
                     if not txt:
                         continue
                     if kind == "likes":
@@ -1102,28 +1112,31 @@ class InstagramReelsScraper:
                         source_cnt = svg_cnt
                         source_kind = "svg"
 
-                    for i in range(min(80, source_cnt)):
-                        try:
-                            el = source.nth(i)
-                            rect = el.evaluate(
-                                "el => { const r = el.getBoundingClientRect(); "
-                                "return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; }"
-                            )
+                    if source_cnt == 0:
+                        self.logger.info(f"{label}: proximity 후보 없음")
+                        return None
 
-                            # video 세로 범위 근처만 (너무 멀리 떨어진 버튼 제외)
-                            if rect["bottom"] < vrect["top"] - 250 or rect["top"] > vrect["bottom"] + 250:
-                                continue
+                    # 단일 evaluate_all로 모든 rect 한 번에 수집 (개별 evaluate 80회 → 1회)
+                    try:
+                        all_rects = source.evaluate_all(
+                            "els => els.slice(0, 80).map((el, i) => {"
+                            "  const r = el.getBoundingClientRect();"
+                            "  return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height, idx: i };"
+                            "})"
+                        )
+                    except Exception:
+                        all_rects = []
 
-                            icy = rect["top"] + rect["height"] / 2
-                            dy = abs(icy - vcy)
-                            # x는 참고만(화면 크기/레이아웃에 따라 액션바가 비디오 안/밖 모두 가능)
-                            dx = abs(rect["left"] - vrect["right"])
-                            score = dy + dx * 0.2  # y 우선, x는 보조
-                            if score < best_score:
-                                best_score = score
-                                best_idx = i
-                        except Exception:
+                    for rect in all_rects:
+                        if rect["bottom"] < vrect["top"] - 250 or rect["top"] > vrect["bottom"] + 250:
                             continue
+                        icy = rect["top"] + rect["height"] / 2
+                        dy = abs(icy - vcy)
+                        dx = abs(rect["left"] - vrect["right"])
+                        score = dy + dx * 0.2
+                        if score < best_score:
+                            best_score = score
+                            best_idx = rect["idx"]
 
                     if best_idx is None:
                         self.logger.info(f"{label}: proximity 후보 없음 (video_right={vrect['right']:.1f})")
@@ -1229,22 +1242,26 @@ class InstagramReelsScraper:
                     btn_cnt = btns.count()
                     scan_n = min(120, btn_cnt)
 
+                    # 단일 evaluate_all로 모든 rect 한 번에 수집 (개별 evaluate 120회 → 1회)
+                    try:
+                        all_btn_rects = btns.evaluate_all(
+                            f"els => els.slice(0, {scan_n}).map((el, i) => {{"
+                            "  const r = el.getBoundingClientRect();"
+                            "  return { top: r.top, bottom: r.bottom, left: r.left, height: r.height, width: r.width, idx: i };"
+                            "})"
+                        )
+                    except Exception:
+                        all_btn_rects = []
+
                     clusters: dict[int, list[tuple[float, int]]] = {}
-                    for i in range(scan_n):
+                    for rect in all_btn_rects:
                         try:
-                            b = btns.nth(i)
-                            rect = b.evaluate(
-                                "el => { const r = el.getBoundingClientRect(); "
-                                "return { top: r.top, bottom: r.bottom, left: r.left, height: r.height, width: r.width }; }"
-                            )
-                            # video 세로 범위 근처 + video 오른쪽 영역만
                             if rect["bottom"] < vrect["top"] - 350 or rect["top"] > vrect["bottom"] + 350:
                                 continue
                             if rect["left"] < vrect["right"] - 50:
                                 continue
-
                             x_bucket = int(round(rect["left"] / 10.0) * 10)
-                            clusters.setdefault(x_bucket, []).append((rect["top"], i))
+                            clusters.setdefault(x_bucket, []).append((rect["top"], rect["idx"]))
                         except Exception:
                             continue
 
@@ -1254,18 +1271,19 @@ class InstagramReelsScraper:
                         best_bucket = max(clusters.keys(), key=lambda k: len(clusters[k]))
                         ordered = sorted(clusters[best_bucket], key=lambda t: t[0])
 
+                        # ordered[:8]의 rect는 all_btn_rects에서 이미 가져왔으므로 재사용
+                        rect_by_idx = {r["idx"]: r for r in all_btn_rects}
                         values: list[int] = []
                         for _, idx in ordered[:8]:
                             try:
-                                b = btns.nth(idx)
-                                rect = b.evaluate(
-                                    "el => { const r = el.getBoundingClientRect(); "
-                                    "return { top: r.top, height: r.height, left: r.left }; }"
-                                )
+                                rect = rect_by_idx.get(idx)
+                                if rect is None:
+                                    continue
                                 bcy = rect["top"] + rect["height"] / 2
                                 if abs(bcy - vcy) > 700:
                                     continue
 
+                                b = btns.nth(idx)
                                 like_v, _, _ = _extract_count_from_button(b, "likes")
                                 com_v, _, _ = _extract_count_from_button(b, "comments")
                                 if like_v is not None:
