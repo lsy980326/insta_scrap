@@ -154,6 +154,17 @@ class BrowserManager:
             self.page = self.context.new_page()
             self.page.set_default_timeout(self.config.playwright_timeout)
 
+            # 비디오 파일 차단 (썸네일/이미지는 허용, 영상 스트림만 차단)
+            # SwiftShader(소프트웨어 렌더링) 환경에서 비디오 디코딩이 CPU를 과도하게 사용하는 것을 방지
+            def _block_video(route):
+                url = route.request.url.lower()
+                if any(ext in url for ext in [".mp4", ".m4v", ".webm", ".m3u8", ".ts"]):
+                    route.abort()
+                else:
+                    route.continue_()
+
+            self.page.route("**/*", _block_video)
+
             # 강화된 WebDriver 속성 제거 및 스텔스 모드 (봇 감지 우회)
             self.page.add_init_script(
                 """
