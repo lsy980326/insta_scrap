@@ -128,7 +128,7 @@ class BrowserManager:
 
             # 컨텍스트 생성 옵션 준비
             context_options = {
-                "viewport": {"width": 1920, "height": 1080},
+                "viewport": {"width": 1280, "height": 800},
                 "user_agent": user_agent,
                 "locale": locale,
                 "timezone_id": self.config.browser_timezone,
