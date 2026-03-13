@@ -203,6 +203,8 @@ class InstagramReelsScraper:
                 pass
 
             # 로그인 폼 대기 — autocomplete 속성은 UI 버전과 무관하게 안정적
+            debug_dir = self.config.output_dir / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
             try:
                 page.wait_for_selector(
                     'input[autocomplete*="username"], input[type="text"]',
@@ -210,13 +212,17 @@ class InstagramReelsScraper:
                     state="visible",
                 )
             except Exception:
-                page.wait_for_selector("input", timeout=10000, state="visible")
+                try:
+                    page.wait_for_selector("input", timeout=10000, state="visible")
+                except Exception:
+                    # 실패 시 현재 화면 스크린샷 저장 후 예외 전파
+                    page.screenshot(path=str(debug_dir / "login_failed.png"))
+                    self.logger.error(f"로그인 페이지 로드 실패 — URL: {page.url} / 스크린샷: {debug_dir}/login_failed.png")
+                    raise
 
             self.logger.info(f"로그인 페이지 로드 완료: {page.url}")
 
             # 디버그 스크린샷
-            debug_dir = self.config.output_dir / "debug"
-            debug_dir.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(debug_dir / "login_page.png"))
 
             # ── 사용자명 입력 ──────────────────────────────────────────────
