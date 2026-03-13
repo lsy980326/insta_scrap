@@ -89,6 +89,17 @@ class BrowserManager:
                 "--password-store=basic",
                 "--use-mock-keychain",
                 "--enable-automation=false",  # 자동화 비활성화
+                # SwiftShader CPU 부하 감소 (헤드리스 Linux 렌더링 최적화)
+                "--disable-gpu-compositing",           # GPU 합성 비활성화 → CPU 렌더링 단순화
+                "--disable-threaded-compositing",      # 합성 스레드 제거 → 단일 스레드로 렌더링
+                "--disable-threaded-animation",        # CSS 애니메이션 스레드 제거
+                "--disable-composited-antialiasing",   # 안티앨리어싱 비활성화
+                "--disable-accelerated-video-decode",  # HW 비디오 디코딩 비활성화
+                "--disable-accelerated-video-encode",  # HW 비디오 인코딩 비활성화
+                "--num-raster-threads=1",              # 래스터화 스레드 1개로 제한
+                "--disable-partial-raster",            # 부분 래스터화 비활성화
+                "--disable-skia-renderer",             # Skia GPU 렌더러 비활성화
+                "--renderer-process-limit=1",          # 렌더러 프로세스 1개로 제한
             ]
 
             # 브라우저 실행 옵션
