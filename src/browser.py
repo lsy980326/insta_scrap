@@ -155,23 +155,18 @@ class BrowserManager:
             self.page.set_default_timeout(self.config.playwright_timeout)
 
             # 불필요한 리소스 차단 (CPU/네트워크 절감)
-            # - 비디오: SwiftShader 소프트웨어 렌더링 CPU 과부하 방지
-            # - 폰트: 데이터 수집에 불필요
-            # - 트래킹/광고: 수집과 무관
-            _BLOCK_EXTENSIONS = (".mp4", ".m4v", ".webm", ".m3u8", ".ts", ".woff2", ".woff", ".ttf", ".otf")
-            _BLOCK_DOMAINS = ("google-analytics.com", "googletagmanager.com", "facebook.com/tr",
-                              "scorecardresearch.com", "doubleclick.net", "googlesyndication.com")
-
-            def _block_unnecessary(route):
-                url = route.request.url.lower()
-                if any(ext in url for ext in _BLOCK_EXTENSIONS):
-                    route.abort()
-                elif any(domain in url for domain in _BLOCK_DOMAINS):
-                    route.abort()
-                else:
-                    route.continue_()
-
-            self.page.route("**/*", _block_unnecessary)
+            # 패턴별로 개별 등록 — **/* 전체 라우팅 시 모든 요청이 Python 경유해 IPC 병목 발생
+            _abort = lambda route: route.abort()
+            # 비디오 스트림 (SwiftShader CPU 과부하 방지)
+            for _pat in ("**/*.mp4", "**/*.m4v", "**/*.webm", "**/*.m3u8", "**/*.ts"):
+                self.page.route(_pat, _abort)
+            # 폰트 (수집과 무관)
+            for _pat in ("**/*.woff2", "**/*.woff", "**/*.ttf", "**/*.otf"):
+                self.page.route(_pat, _abort)
+            # 트래킹/광고
+            for _pat in ("**/google-analytics.com/**", "**/googletagmanager.com/**",
+                         "**/doubleclick.net/**", "**/googlesyndication.com/**"):
+                self.page.route(_pat, _abort)
 
             # 강화된 WebDriver 속성 제거 및 스텔스 모드 (봇 감지 우회)
             self.page.add_init_script(
