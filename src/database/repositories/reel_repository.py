@@ -180,6 +180,27 @@ class ReelRepository:
         self.session.flush()
         return metric
 
+    def find_recent_by_country(self, country_code: str, days: int = 7) -> list[Reel]:
+        """
+        최근 N일 이내 수집된 릴스를 국가 코드로 조회 (추적 대상 로드용)
+
+        Args:
+            country_code: 국가 코드 (예: kr, jp)
+            days: 최근 며칠치 (기본 7일)
+
+        Returns:
+            Reel 리스트 (collected_at 내림차순)
+        """
+        from datetime import timedelta, timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        return (
+            self.session.query(Reel)
+            .filter(Reel.country_code == country_code)
+            .filter(Reel.collected_at >= cutoff)
+            .order_by(Reel.collected_at.desc())
+            .all()
+        )
+
     def get_latest_metric(self, reel: Reel) -> ReelMetric | None:
         """
         릴스의 최신 통계 정보 조회

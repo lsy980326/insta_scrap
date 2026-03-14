@@ -52,10 +52,15 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Instagram Reels 조회수 추적")
-    parser.add_argument("input_file", help="입력 JSON 파일 경로")
+    parser.add_argument("input_file", nargs="?", help="입력 JSON 파일 경로 (--from-db 미사용 시)")
     parser.add_argument("output_file", nargs="?", help="출력 JSON 파일 경로 (선택)")
     parser.add_argument("--profile", "-p", help="계정 프로파일 (예: kr, jp)")
+    parser.add_argument("--from-db", action="store_true", help="DB에서 추적 대상 로드 (JSON 파일 불필요)")
+    parser.add_argument("--days", type=int, default=7, help="--from-db 사용 시 최근 며칠치 추적 (기본 7)")
     args = parser.parse_args()
+
+    if not args.from_db and not args.input_file:
+        parser.error("--from-db를 사용하거나 input_file을 지정하세요.")
 
     # 설정 로드 (프로파일 우선)
     config = load_profile(args.profile) if args.profile else load_config()
@@ -79,18 +84,6 @@ def main() -> None:
     if args.profile:
         logger.info(f"프로파일: {args.profile} (계정: {config.instagram_username})")
 
-    input_file = Path(args.input_file)
-    output_file = Path(args.output_file) if args.output_file else None
-
-    # 입력 파일 존재 확인
-    if not input_file.exists():
-        logger.error(f"입력 파일을 찾을 수 없습니다: {input_file}")
-        sys.exit(1)
-
-    logger.info(f"입력 파일: {input_file}")
-    if output_file:
-        logger.info(f"출력 파일: {output_file}")
-
     import time
     start_time = time.time()
 
@@ -99,31 +92,53 @@ def main() -> None:
         tracker = ReelViewsTracker(config=config)
 
         try:
-            # 로그인 정보가 있으면 자동 로그인
-            if config.instagram_username and config.instagram_password:
-                logger.info("로그인 정보가 설정되어 있습니다. 로그인을 시도합니다...")
-                try:
-                    tracker.login()
-                    logger.info("로그인 성공!")
-                except Exception as e:
-                    logger.warning(f"로그인 실패: {e}")
-                    capture_exception(e, event="login_failed")
-                    if notifier:
-                        notifier.send_login_error(profile, str(e))
-                    logger.warning("로그인 없이 계속 진행합니다. 일부 크리에이터의 reels 페이지는 접근할 수 없을 수 있습니다.")
-            else:
-                logger.warning("로그인 정보가 없습니다. 일부 크리에이터의 reels 페이지는 접근할 수 없을 수 있습니다.")
+            if args.from_db:
+                # DB 기반 추적 (--from-db)
+                country_code = config.country_code or profile
+                logger.info(f"DB 기반 추적 시작: {country_code}, 최근 {args.days}일")
+                tracked_count = tracker.track_from_db(country_code=country_code, days=args.days)
+                duration = int(time.time() - start_time)
+                logger.info("=" * 60)
+                logger.info(f"DB 추적 완료: {tracked_count}개 릴스 업데이트")
+                logger.info("=" * 60)
+                if notifier:
+                    notifier.send_track_summary(profile, tracked_count, duration)
 
-            # 조회수 추적 실행
-            result_file = tracker.track_views(input_file, output_file)
-            duration = int(time.time() - start_time)
-            logger.info("=" * 60)
-            logger.info(f"조회수 추적 완료!")
-            logger.info(f"결과 파일: {result_file}")
-            logger.info("=" * 60)
-            if notifier:
-                tracked_count = getattr(tracker, "tracked_count", 0)
-                notifier.send_track_summary(profile, tracked_count, duration)
+            else:
+                # 기존 JSON 파일 기반 추적
+                input_file = Path(args.input_file)
+                output_file = Path(args.output_file) if args.output_file else None
+
+                if not input_file.exists():
+                    logger.error(f"입력 파일을 찾을 수 없습니다: {input_file}")
+                    sys.exit(1)
+
+                logger.info(f"입력 파일: {input_file}")
+
+                # 로그인 정보가 있으면 자동 로그인
+                if config.instagram_username and config.instagram_password:
+                    logger.info("로그인 정보가 설정되어 있습니다. 로그인을 시도합니다...")
+                    try:
+                        tracker.login()
+                        logger.info("로그인 성공!")
+                    except Exception as e:
+                        logger.warning(f"로그인 실패: {e}")
+                        capture_exception(e, event="login_failed")
+                        if notifier:
+                            notifier.send_login_error(profile, str(e))
+                        logger.warning("로그인 없이 계속 진행합니다.")
+                else:
+                    logger.warning("로그인 정보가 없습니다.")
+
+                result_file = tracker.track_views(input_file, output_file)
+                duration = int(time.time() - start_time)
+                logger.info("=" * 60)
+                logger.info(f"조회수 추적 완료!")
+                logger.info(f"결과 파일: {result_file}")
+                logger.info("=" * 60)
+                if notifier:
+                    tracked_count = getattr(tracker, "tracked_count", 0)
+                    notifier.send_track_summary(profile, tracked_count, duration)
 
         except KeyboardInterrupt:
             logger.info("\n사용자에 의해 중단되었습니다.")

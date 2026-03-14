@@ -52,6 +52,10 @@ class ScrapingConfig(BaseSettings):
 
     # 스크래핑 제한
     max_reels: int | None = Field(default=None, ge=1, description="최대 수집 개수")
+
+    # 추적 설정
+    track_batch_size: int = Field(default=50, ge=1, description="추적 배치 크기 (크리에이터 수, 배치마다 휴식)")
+    track_batch_sleep: int = Field(default=300, ge=0, description="추적 배치 간 sleep 시간 (초, burst credit 회복)")
     scrape_run_minutes: int | None = Field(
         default=None, ge=1, description="수집 최대 실행 시간 (분). systemd RestartSec와 조합해 burst credit 회복"
     )

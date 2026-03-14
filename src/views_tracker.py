@@ -888,6 +888,137 @@ class ReelViewsTracker:
             self.logger.error(f"조회수 추적 실패: {e}")
             raise ScrapingError(f"조회수 추적에 실패했습니다: {e}") from e
 
+    def _block_images_for_tracking(self, page: "Page") -> None:
+        """추적 전용 이미지 차단 — 크리에이터 릴스 그리드 썸네일 렌더링 부하 감소"""
+        _abort = lambda route: route.abort()  # noqa: E731
+        for _pat in ("**/*.jpg", "**/*.jpeg", "**/*.png", "**/*.webp", "**/*.gif", "**/*.avif"):
+            page.route(_pat, _abort)
+
+    def track_from_db(self, country_code: str, days: int = 7) -> int:
+        """
+        DB에서 최근 N일 릴스를 로드하여 views/likes/comments 추적
+
+        Args:
+            country_code: 국가 코드 (예: kr, jp)
+            days: 최근 며칠치 릴스를 추적할지 (기본 7일)
+
+        Returns:
+            업데이트된 릴스 수
+        """
+        if not self._db_enabled:
+            raise ScrapingError("DB가 비활성화 상태입니다. DB_ENABLED=true 설정이 필요합니다.")
+
+        # 브라우저 시작 + 로그인
+        if self.browser_manager is None:
+            self.browser_manager = BrowserManager(self.config)
+            self.browser_manager.start()
+
+        if not self._is_logged_in:
+            self.login()
+
+        page = self.browser_manager.get_page()
+
+        # 추적 전용 이미지 차단 (크리에이터 릴스 그리드 최적화)
+        self._block_images_for_tracking(page)
+
+        # DB에서 추적 대상 로드
+        session_gen = get_db_session()
+        session = next(session_gen)
+        try:
+            reel_repo = ReelRepository(session)
+            reels = reel_repo.find_recent_by_country(country_code, days)
+        finally:
+            session.close()
+
+        self.logger.info(f"DB 추적 대상: {len(reels)}개 릴스 ({country_code}, 최근 {days}일)")
+
+        if not reels:
+            self.logger.warning("추적 대상 릴스가 없습니다.")
+            self.tracked_count = 0
+            return 0
+
+        # 크리에이터별 그룹화 (1크리에이터 = 1페이지 방문으로 최소화)
+        creator_reels: dict[str, list] = defaultdict(list)
+        for reel in reels:
+            if reel.author:
+                creator_reels[reel.author].append(reel)
+
+        self.logger.info(f"크리에이터 {len(creator_reels)}명 대상")
+
+        total_updated = 0
+        failed_creators = []
+        batch_size = self.config.track_batch_size
+        batch_sleep = self.config.track_batch_sleep
+        creators = list(creator_reels.items())
+
+        for batch_idx, batch_start in enumerate(range(0, len(creators), batch_size)):
+            batch = creators[batch_start:batch_start + batch_size]
+            self.logger.info(
+                f"배치 {batch_idx + 1}/{-(-len(creators) // batch_size)} 시작 "
+                f"({batch_start + 1}~{min(batch_start + batch_size, len(creators))}/{len(creators)}명)"
+            )
+
+            for creator_name, reel_list in batch:
+                try:
+                    target_reel_ids = {r.reel_id for r in reel_list if r.reel_id}
+                    if not target_reel_ids:
+                        continue
+
+                    metrics_dict = self._extract_views_from_creator_reels_page(
+                        page, creator_name, target_reel_ids
+                    )
+
+                    for reel_id, metrics in metrics_dict.items():
+                        try:
+                            s = next(get_db_session())
+                            try:
+                                repo = ReelRepository(s)
+                                reel = repo.find_by_reel_id(reel_id)
+                                if reel:
+                                    repo.add_metric(
+                                        reel=reel,
+                                        views=metrics.get("views"),
+                                        likes=metrics.get("likes"),
+                                        comments=metrics.get("comments"),
+                                    )
+                                    s.commit()
+                                    total_updated += 1
+                            finally:
+                                s.close()
+                        except Exception as e:
+                            self.logger.debug(f"DB 업데이트 실패 ({reel_id}): {e}")
+
+                    random_delay(1.0, 2.0)
+
+                except Exception as e:
+                    self.logger.error(f"크리에이터 '{creator_name}' 처리 오류: {e}")
+                    failed_creators.append(creator_name)
+                    try:
+                        _ = page.url
+                    except Exception:
+                        self.logger.warning("브라우저 재시작 중...")
+                        if self.browser_manager:
+                            try:
+                                self.browser_manager.close()
+                            except Exception:
+                                pass
+                        self.browser_manager = BrowserManager(self.config)
+                        self.browser_manager.start()
+                        page = self.browser_manager.get_page()
+                        self._block_images_for_tracking(page)
+
+            # 배치 간 휴식 (마지막 배치 제외)
+            if batch_start + batch_size < len(creators) and batch_sleep > 0:
+                self.logger.info(f"⏱️ 배치 휴식 {batch_sleep}초 (burst credit 회복 중...)")
+                time.sleep(batch_sleep)
+
+        if failed_creators:
+            self.logger.warning(f"처리 실패 크리에이터 {len(failed_creators)}명: {', '.join(failed_creators)}")
+
+        self.logger.info(f"DB 추적 완료: {total_updated}개 릴스 업데이트")
+        self.tracked_count = total_updated
+        return total_updated
+
     def _update_views_in_db(
         self,
         reel_id: str,
