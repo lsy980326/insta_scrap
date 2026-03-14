@@ -4,7 +4,9 @@
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -144,6 +146,7 @@ class ReelRepository:
                 title=reel_data.title,
                 music=reel_data.music,
                 country_code=country_code,
+                collected_at=datetime.now(KST),
                 created_at=posted_datetime if posted_datetime else func.current_timestamp(),
                 updated_at=posted_datetime if posted_datetime else func.current_timestamp(),
             )
