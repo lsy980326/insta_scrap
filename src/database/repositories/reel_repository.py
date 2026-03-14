@@ -146,7 +146,7 @@ class ReelRepository:
                 title=reel_data.title,
                 music=reel_data.music,
                 country_code=country_code,
-                collected_at=datetime.now(KST),
+                collected_at=datetime.now(KST).replace(tzinfo=None),
                 created_at=posted_datetime if posted_datetime else func.current_timestamp(),
                 updated_at=posted_datetime if posted_datetime else func.current_timestamp(),
             )
