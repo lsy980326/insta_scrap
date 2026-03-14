@@ -137,24 +137,33 @@ class ThumbnailArchiver:
             logger.warning(f"[S3] 업로드 실패 ({label}): {e}")
             return None
 
-    def _download_and_convert(self, cdn_url: str) -> bytes | None:
-        """CDN URL 다운로드 → webp bytes 변환."""
-        try:
-            resp = requests.get(cdn_url, timeout=_DOWNLOAD_TIMEOUT, stream=True)
-            resp.raise_for_status()
+    def _download_and_convert(self, cdn_url: str, retries: int = 3, retry_delay: float = 3.0) -> bytes | None:
+        """CDN URL 다운로드 → webp bytes 변환. DNS 실패 시 재시도."""
+        import time
 
-            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+        last_exc: Exception | None = None
+        for attempt in range(1, retries + 1):
+            try:
+                resp = requests.get(cdn_url, timeout=_DOWNLOAD_TIMEOUT, stream=True)
+                resp.raise_for_status()
 
-            # 최대 크기 리사이즈 (비율 유지)
-            img.thumbnail((_MAX_SIZE, _MAX_SIZE), Image.LANCZOS)
+                img = Image.open(io.BytesIO(resp.content)).convert("RGB")
 
-            buf = io.BytesIO()
-            img.save(buf, format="WEBP", quality=_WEBP_QUALITY)
-            return buf.getvalue()
+                # 최대 크기 리사이즈 (비율 유지)
+                img.thumbnail((_MAX_SIZE, _MAX_SIZE), Image.LANCZOS)
 
-        except Exception as e:
-            logger.warning(f"[S3] 이미지 변환 실패 ({cdn_url[:60]}...): {e}")
-            return None
+                buf = io.BytesIO()
+                img.save(buf, format="WEBP", quality=_WEBP_QUALITY)
+                return buf.getvalue()
+
+            except Exception as e:
+                last_exc = e
+                if attempt < retries:
+                    logger.debug(f"[S3] 이미지 다운로드 재시도 ({attempt}/{retries}): {e}")
+                    time.sleep(retry_delay)
+
+        logger.warning(f"[S3] 이미지 변환 실패 ({cdn_url[:60]}...): {last_exc}")
+        return None
 
 
 def _extract_reel_id(link: str) -> str | None:
