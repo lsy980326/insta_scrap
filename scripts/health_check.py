@@ -63,11 +63,14 @@ def check_today_collect(config, profile: str) -> int:
         from src.database.models import Reel
         import sqlalchemy as sa
 
-        today = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # collected_at은 KST naive datetime으로 저장됨 → KST 기준 오늘 자정과 비교
+        from datetime import timedelta
+        KST = timezone(timedelta(hours=9))
+        today_kst = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
         with get_session() as session:
             count = session.scalar(
                 sa.select(sa.func.count()).select_from(Reel).where(
-                    Reel.created_at >= today,
+                    Reel.collected_at >= today_kst,
                     Reel.country_code == profile.lower(),
                 )
             )
