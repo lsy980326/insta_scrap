@@ -22,19 +22,26 @@ class SlackNotifier:
     def __init__(self, webhook_url: str) -> None:
         self._url = webhook_url
 
-    def _post(self, text: str) -> None:
+    def _post(self, text: str, retries: int = 3, retry_delay: float = 5.0) -> None:
+        import time
         payload = json.dumps({"text": text}).encode("utf-8")
         req = urllib.request.Request(
             self._url,
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status != 200:
-                    logger.warning(f"Slack 응답 오류: {resp.status}")
-        except URLError as e:
-            logger.warning(f"Slack 알림 전송 실패: {e}")
+        for attempt in range(1, retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"Slack 응답 오류: {resp.status}")
+                    return
+            except URLError as e:
+                if attempt < retries:
+                    logger.warning(f"Slack 알림 전송 실패 (재시도 {attempt}/{retries}): {e}")
+                    time.sleep(retry_delay)
+                else:
+                    logger.warning(f"Slack 알림 전송 최종 실패: {e}")
 
     def send_login_error(self, profile: str, detail: str = "") -> None:
         flag = _flag(profile)
@@ -75,6 +82,14 @@ class SlackNotifier:
         self._post(
             f"{flag} *[{profile.upper()}] 수집 완료*\n"
             f"수집 건수: {collect_count}건 | 소요 시간: {mins}분 {secs}초"
+        )
+
+    def send_cpu_steal_warning(self, profile: str, steal_pct: float) -> None:
+        flag = _flag(profile)
+        self._post(
+            f"{flag} *[{profile.upper()}] CPU Steal 경고*\n"
+            f"현재 steal: {steal_pct:.1f}% — 버스트 크레딧 고갈 중\n"
+            f"수집 속도 저하 예상. 서비스 일시 중단 고려 필요."
         )
 
     def send_track_summary(self, profile: str, tracked_count: int, duration_sec: int) -> None:

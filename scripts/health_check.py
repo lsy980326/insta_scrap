@@ -22,6 +22,7 @@ from src.utils.logger import get_logger, setup_logger
 from src.utils.notifier import get_notifier
 
 DISK_WARN_PCT = 70.0
+CPU_STEAL_WARN_PCT = 30.0
 
 
 def check_nordvpn(profile: str) -> bool:
@@ -76,6 +77,27 @@ def check_today_collect(config, profile: str) -> int:
         return -1
 
 
+def check_cpu_steal() -> float:
+    """CPU steal % 확인 (/proc/stat 2회 측정, 1초 간격)"""
+    import time
+
+    def _read_stat() -> list[int]:
+        with open("/proc/stat") as f:
+            line = f.readline()
+        return [int(v) for v in line.split()[1:]]
+
+    try:
+        s1 = _read_stat()
+        time.sleep(1)
+        s2 = _read_stat()
+        diff = [b - a for a, b in zip(s1, s2)]
+        total = sum(diff)
+        steal = diff[7] if len(diff) > 7 else 0
+        return steal / total * 100 if total > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 def check_disk(base_path: str = "/srv/insta_scrap") -> float:
     """디스크 사용률(%) 반환"""
     total, used, _ = shutil.disk_usage(base_path)
@@ -126,6 +148,13 @@ def main() -> None:
         if notifier:
             notifier.send_disk_warning(profile, used_pct)
 
+    # 5. CPU steal (버스트 크레딧 고갈 감지)
+    steal_pct = check_cpu_steal()
+    if steal_pct >= CPU_STEAL_WARN_PCT:
+        issues.append(f"CPU steal {steal_pct:.1f}%")
+        if notifier:
+            notifier.send_cpu_steal_warning(profile, steal_pct)
+
     # 매시간 Slack 상태 요약 전송
     from src.utils.notifier import _flag
     status = "🔴 이상" if issues else "🟢 정상"
@@ -134,6 +163,7 @@ def main() -> None:
         f"DB: {'✅' if db_ok else '❌'}",
         f"오늘 수집: {count}건",
         f"디스크: {used_pct:.1f}%",
+        f"CPU steal: {steal_pct:.1f}%",
     ]
     if issues:
         detail_lines.append(f"이상: {', '.join(issues)}")
