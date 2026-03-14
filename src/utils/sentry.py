@@ -33,7 +33,7 @@ def capture_exception(exc: BaseException, **extra_tags: str) -> None:
     """예외를 Sentry에 전송. Sentry 미설정이면 무시."""
     if not _is_sentry_enabled():
         return
-    with sentry_sdk.push_scope() as scope:
+    with sentry_sdk.new_scope() as scope:
         for key, value in extra_tags.items():
             scope.set_tag(key, value)
         sentry_sdk.capture_exception(exc)
@@ -41,4 +41,7 @@ def capture_exception(exc: BaseException, **extra_tags: str) -> None:
 
 def _is_sentry_enabled() -> bool:
     """Sentry DSN이 설정되어 있는지 확인."""
-    return bool(sentry_sdk.Hub.current.client)
+    try:
+        return sentry_sdk.get_client().dsn is not None
+    except Exception:
+        return False
