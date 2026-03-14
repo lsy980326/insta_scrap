@@ -47,8 +47,9 @@ def check_nordvpn(profile: str) -> bool:
 def check_db(config) -> bool:  # type: ignore[type-arg]
     """DB 연결 확인"""
     try:
-        from src.database.connection import get_session
-        with get_session() as session:
+        from src.database.connection import get_db_session, init_db
+        init_db(config)
+        with get_db_session() as session:
             session.execute(__import__("sqlalchemy").text("SELECT 1"))
         return True
     except Exception as e:
@@ -59,15 +60,16 @@ def check_db(config) -> bool:  # type: ignore[type-arg]
 def check_today_collect(config, profile: str) -> int:
     """오늘 수집된 릴스 건수 확인"""
     try:
-        from src.database.connection import get_session
+        from src.database.connection import get_db_session, init_db
         from src.database.models import Reel
+        init_db(config)
         import sqlalchemy as sa
 
         # collected_at은 KST naive datetime으로 저장됨 → KST 기준 오늘 자정과 비교
         from datetime import timedelta
         KST = timezone(timedelta(hours=9))
         today_kst = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-        with get_session() as session:
+        with get_db_session() as session:
             count = session.scalar(
                 sa.select(sa.func.count()).select_from(Reel).where(
                     Reel.collected_at >= today_kst,
