@@ -4,6 +4,7 @@ SQLAlchemy를 사용한 PostgreSQL 연결 관리
 """
 
 from collections.abc import Generator
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -90,6 +91,7 @@ def init_db(config: ScrapingConfig) -> bool:
         return False
 
 
+@contextmanager
 def get_db_session() -> Generator[Session, None, None]:
     """
     데이터베이스 세션 생성 (의존성 주입용)
