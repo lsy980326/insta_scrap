@@ -1,0 +1,41 @@
+feat: 국가별 랭킹, reel_metrics 중복 방지, 썸네일/크리에이터 추출 개선
+
+### 주요 변경사항
+- 국가별 일일 랭킹
+  - reels.country_code 컬럼 추가 (계정/프로파일 기준)
+  - ScrapingConfig에 country_code 추가, load_profile()에서 프로파일 이름 설정
+  - ReelRepository.create_or_update_reel(reel_data, country_code) — 신규 시에만 country_code 반영
+  - 웹 API: GET /api/reels/ranking에 country 파라미터, 일일 랭킹(startDate=endDate) 시 해당 일자 메트릭 스냅샷
+  - 웹 API: GET /api/countries (country_code 목록)
+  - 웹 UI: 국가 선택(한국/일본 표기), 수집일(recorded_at) 기준 주차·"N월 M째 주" 형식, 필터 카드 레이아웃
+- reel_metrics 중복 방지
+  - save_to_json(..., db_only_new_count) 도입, 주기 저장 시 신규 수집 구간만 _save_to_db에 전달
+  - last_db_saved_count로 구간 추적, 루프 종료·Ctrl+C 시 남은 구간 저장
+- 썸네일·크리에이터 추출
+  - 로케일 독립: /username/reels/ href 기반 author·프로필 이미지 1순위, 한국어/일본어/영어 aria-label·alt fallback
+  - 네트워크 캐시에서 thumbnail·author·profile_image 추출, 캐시 값 있으면 DOM 대신 사용 (썸네일 중복 방지)
+  - API 응답 여러 경로 지원 (image_versions2, carousel_media, thumbnail_resources 등)
+- 웹 UI
+  - 기본 정렬 좋아요 순, 좋아요 버튼 왼쪽 배치
+- views_tracker: return views_dict → metrics_dict 버그 수정
+- 린터: scraper/views_tracker W293/B007/UP038/B904/F841, ScrapingSessionRepository 미사용 제거
+
+### 수정된 파일
+- src/config.py - country_code 필드 추가
+- src/database/models.py - Reel.country_code 추가
+- src/database/repositories/reel_repository.py - create_or_update_reel(country_code), 신규 시에만 설정
+- src/profile_loader.py - overrides["country_code"] = profile_name
+- src/scraper.py - _save_to_db country_code 전달, save_to_json(db_only_new_count), 캐시 썸네일/author/프로필, href·다국어 추출, 린터 수정
+- src/views_tracker.py - return metrics_dict, W293 제거
+- web/app/api/reels/ranking/route.ts - country 파라미터, 일일 랭킹 메트릭 필터
+- web/app/page.tsx - 국가·일자 필터, 정렬 기본값·버튼 순서, 주차 라벨·수집일 기준 그룹화, 필터 카드 UI
+
+### 신규 파일
+- database/migrations/001_add_reels_country_code.sql - reels.country_code 마이그레이션
+- web/app/api/countries/route.ts - 국가 목록 API
+
+### 성과
+- 국가별·일자별 랭킹 조회 및 웹 UI 지원
+- 수집 시 릴스당 reel_metrics 1건만 저장되도록 중복 방지
+- 일본 등 다국어 로케일에서 썸네일·author·프로필 이미지 수집 안정화
+- 웹 필터/정렬 UX 개선
