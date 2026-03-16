@@ -11,8 +11,8 @@ profiles:
 
   kr:
     # ---- 계정 ----
-    instagram_username: cxv963@naver.com
-    instagram_password: 1q2w3e4r!!
+    instagram_username: trendboardmvp004@gmail.com
+    instagram_password: trendboardmvp@1
 
     # ---- 지역 설정 ----
     locale: ko-KR
@@ -31,7 +31,7 @@ profiles:
   jp:
     # ---- 계정 ----
     instagram_username: 98inya@gmail.com
-    instagram_password: 1q2w3e4r!
+    instagram_password: 1q2w3e4r!!!
 
     # ---- 지역 설정 ----
     locale: ja-JP
