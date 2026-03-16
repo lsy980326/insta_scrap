@@ -161,10 +161,10 @@ class InstagramReelsScraper:
                                 self.logger.info("릴스 탭으로 이동 시도 중...")
                                 self.navigate_to_reels_tab()
                                 self.logger.info("릴스 탭 이동 완료")
+                                return True
                             except Exception as e:
-                                self.logger.warning(f"릴스 탭 이동 실패: {e}")
-
-                            return True
+                                self.logger.warning(f"릴스 탭 이동 실패 (세션 만료 의심, 전체 로그인 진행): {e}")
+                                session_data = None  # 세션 무효화 → 전체 로그인으로 fallthrough
                         else:
                             self.logger.warning("⚠️ 저장된 세션이 만료됨, 전체 로그인 진행")
 
@@ -673,6 +673,8 @@ class InstagramReelsScraper:
                 self.logger.debug("domcontentloaded 대기 실패 (계속 진행)")
 
             current_url = page.url
+            if "accounts/login" in current_url or "/login" in current_url:
+                raise ScrapingError(f"릴스 탭 이동 중 로그인 페이지로 리다이렉트됨 (세션 만료): {current_url}")
             if "/reels" in current_url:
                 self.logger.info(f"릴스 탭으로 이동 완료: {current_url}")
                 return True
