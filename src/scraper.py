@@ -202,6 +202,19 @@ class InstagramReelsScraper:
             except Exception:
                 pass
 
+            # 계정 선택 화면 처리 ("다른 프로필 사용하기" 버튼이 있으면 클릭)
+            # Instagram이 이전 세션 계정을 기억해 계속하기 화면을 보여주는 경우
+            try:
+                switch_btn = page.locator(
+                    'button:has-text("다른 프로필 사용하기"), button:has-text("Switch accounts"), button:has-text("Use another account")'
+                ).first
+                if switch_btn.is_visible(timeout=2000):
+                    self.logger.info("계정 선택 화면 감지 — '다른 프로필 사용하기' 클릭")
+                    switch_btn.click()
+                    page.wait_for_timeout(1500)
+            except Exception:
+                pass
+
             # 로그인 폼 대기 — autocomplete 속성은 UI 버전과 무관하게 안정적
             debug_dir = self.config.output_dir / "debug"
             debug_dir.mkdir(parents=True, exist_ok=True)
