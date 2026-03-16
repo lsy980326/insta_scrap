@@ -206,12 +206,12 @@ class InstagramReelsScraper:
             # Instagram이 이전 세션 계정을 기억해 계속하기 화면을 보여주는 경우
             try:
                 switch_btn = page.locator(
-                    'button:has-text("다른 프로필 사용하기"), button:has-text("Switch accounts"), button:has-text("Use another account")'
-                ).first
-                if switch_btn.is_visible(timeout=2000):
+                    ':has-text("다른 프로필 사용하기"), :has-text("Switch accounts"), :has-text("Use another account")'
+                ).last
+                if switch_btn.is_visible(timeout=3000):
                     self.logger.info("계정 선택 화면 감지 — '다른 프로필 사용하기' 클릭")
                     switch_btn.click()
-                    page.wait_for_timeout(1500)
+                    page.wait_for_timeout(2000)
             except Exception:
                 pass
 
