@@ -517,7 +517,7 @@ class ReelViewsTracker:
 
             self.logger.info(f"크리에이터 '{creator_name}'의 reels 페이지에서 조회수 추출 중...")
 
-            max_scrolls = 5  # 최대 스크롤 횟수
+            max_scrolls = 10  # 최대 스크롤 횟수
 
             # 스크롤하면서 조회수 추출 시도
             for scroll_attempt in range(max_scrolls + 1):
