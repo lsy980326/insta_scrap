@@ -1491,7 +1491,7 @@ class InstagramReelsScraper:
                 except Exception:
                     pass
 
-                # 방법 2: div[dir="auto"] > span 구조로 탐색 (방법 1 실패 시)
+                # 방법 2: root 범위 div[dir="auto"] 탐색 (방법 1 실패 시)
                 if not reel_data.title:
                     try:
                         divs = root.locator('div[dir="auto"]').all()
@@ -1698,6 +1698,9 @@ class InstagramReelsScraper:
                         if reel_data.creator_profile_image is None and cached_data.get("profile_image"):
                             reel_data.creator_profile_image = cached_data["profile_image"]
                             self.logger.info(f"프로필 사진 (캐시 fallback): {reel_data.creator_profile_image[:50]}...")
+                        if reel_data.title is None and cached_data.get("caption"):
+                            reel_data.title = cached_data["caption"]
+                            self.logger.info(f"제목(API 캐시): {reel_data.title[:60]!r}")
 
                         self.logger.info(
                             f"counts(cache): "
@@ -1895,6 +1898,21 @@ class InstagramReelsScraper:
                     except Exception:
                         pass
 
+                    # 캡션 추출
+                    cached_caption = None
+                    try:
+                        cap = media.get("caption")
+                        if isinstance(cap, dict):
+                            cached_caption = cap.get("text")
+                        elif isinstance(cap, str):
+                            cached_caption = cap
+                        if not cached_caption:
+                            edges_cap = media.get("edge_media_to_caption", {}).get("edges", [])
+                            if edges_cap:
+                                cached_caption = edges_cap[0].get("node", {}).get("text")
+                    except Exception:
+                        pass
+
                     # 캐시에 저장 (이미 있으면 덮어쓰기)
                     cached_item = {
                         "code": shortcode,
@@ -1905,6 +1923,7 @@ class InstagramReelsScraper:
                         "thumbnail": thumbnail_url,
                         "author": cached_author,
                         "profile_image": cached_profile_image,
+                        "caption": cached_caption,
                         "cached_at": time.time()
                     }
                     self._reels_cache[shortcode] = cached_item
