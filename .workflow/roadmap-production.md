@@ -798,57 +798,107 @@ Sentry → Slack `#트렌드보드-인스타-알림`: 신규 에러 이슈 발�
 
 ---
 
-### D7 (3/15~) — JP / US 서버 확장 ← **현재 단계**
+### D7 (3/16) — JP 서버 셋업 ✅ 완료
 
-**전제 조건**: KR 서버 수집/추적 정상 확인 후 진행
+**JP 서버**: `43.201.192.125` (KR 스냅샷으로 생성)
 
-#### JP 서버 셋업
+#### 셋업 내용
+
+- ✅ `.env` + `accounts.yaml` scp 배포
+- ✅ `PLAYWRIGHT_HEADLESS=false` → `true` 수정 (스냅샷 기본값 오류 수정)
+- ✅ systemd `insta-scraper@jp.service` 등록 + enable + start
+- ✅ `/etc/cron.d/insta-jp` 등록 (07:00 start / 23:00 stop / 00:00 + 12:00 추적 / 매시간 헬스체크)
+- ✅ NordVPN Japan #799 (도쿄) 연결 + autoconnect on Japan
+- ✅ 로그인 성공 (`98inya@gmail.com`) + 릴스 수집 시작 확인
+
+> 상세 설정: `.workflow/server-settings.md` 참조
+
+#### KR vs JP 차이점
+
+| 항목 | KR | JP |
+|------|----|----|
+| IP | 43.200.196.211 (고정) | 43.201.192.125 (고정) |
+| NordVPN | south_korea | Japan |
+| 로케일 | ko-KR / Asia/Seoul | ja-JP / Asia/Tokyo |
+| 추적 스케줄 | 00:00 1회 | 00:00 + 12:00 2회 |
+| 계정 | trendboardmvp004@gmail.com | 98inya@gmail.com |
+
+#### D7 운영 이슈 및 조치
+
+| 이슈 | 원인 | 조치 |
+|------|------|------|
+| KR NordVPN 재부팅 후 단절 | autoconnect 설정에도 nordvpnd 시작 타이밍 문제로 미연결 | 수동 재연결 (`nordvpn connect south_korea`), 헬스체크에서 감지 |
+| JP 버스트 크레딧 0 | Lightsail 신규 인스턴스 생성 시 크레딧 미지급 | 서비스 중지 후 크레딧 회복 대기 → 재시작 |
+| JP SSH 접속 불가 | 버스트 크레딧 고갈로 CPU 0% → sshd 응답 불가 | 재부팅 후 복구 |
+| title 추출 ~16번 이후 None | `root`(video+좋아요+댓글 ancestor) 범위에 캡션 div 미포함 | API 캐시 `caption` 필드 추가, 캐시 fallback으로 보완 |
+
+---
+
+### D7.6 (3/20) — KR/JP 전체 점검 및 추가 수정 ✅ 완료
+
+#### 점검 결과 요약
+
+| 항목 | KR | JP |
+|------|----|----|
+| 수집 서비스 | ✅ 정상 (23:00 자동 중지) | ✅ 정상 (active, 40건+ 수집) |
+| NordVPN | ✅ 안정 (업타임 26시간) | ⚠️ 재부팅 직후 (업타임 8분) |
+| 크론 | ✅ 정상 (`insta-scraper-kr`) | ✅ 정상 (`insta-jp`) |
+| nordvpn-autoconnect | ✅ 수정 완료 | ✅ 수정 완료 (이전) |
+| 디스크 | ✅ 8% | ✅ 8% |
+| 메모리 | ✅ 1.3GB/3.7GB | ✅ 2.1GB/3.7GB (수정 후 개선) |
+
+#### 발견 및 수정
+
+| 서버 | 발견 | 조치 |
+|------|------|------|
+| KR | `nordvpn-autoconnect.service` — `User=ubuntu` + `HOME=/home/ubuntu` 누락 → `$HOME is not defined` 에러로 계속 실패 | `User=ubuntu` + `Environment=HOME=/home/ubuntu` 추가 → SUCCESS |
+| JP | **`insta-scraper@kr.service`가 JP 서버에서 실행 중** — KR 스냅샷 잔재. `--profile kr`로 KR 수집을 JP에서 수행. RAM 1.4GB + CPU 60%+ 잠식 → 메모리 부족(3.5GB) + 부하 10의 실질 원인 | `systemctl stop insta-scraper@kr` + `disable` → 메모리 3.5GB→2.1GB 회복 |
+| JP | 00:00 추적이 VPN 불안정으로 DB 연결 실패 후 4분만에 종료 (미실행) | 재부팅으로 복구됨, 다음 00:00 재실행 대기 |
+
+---
+
+### D7.5 (3/20) — JP 서버 장애 분석 및 수정 ✅ 완료
+
+#### 장애 경위 (2026-03-19 12:14 ~ 03-20 00:23, 약 12시간)
+
+- **12:00**: 추적 크론(`track_views.py`) + 수집 서비스(`insta-scraper@jp`) 동시 실행 → Chrome 2개 동시 구동 → CPU/메모리 폭증
+- **12:12**: NordVPN DNS 처리 불가 (`Temporary failure in name resolution`) → DB/Instagram/Slack 모두 연결 실패
+- **12:14**: 수집 서비스 `LoginError`로 exit → 이후 40분마다 재시작해도 VPN DNS 불안정으로 계속 실패 반복
+- **00:23**: 서버 재부팅으로 복구
+
+#### 근본 원인 2가지
+
+| 원인 | 내용 |
+|------|------|
+| `nordvpn-autoconnect.service` 잘못 설정 | KR 스냅샷 잔재 — `ExecStart=nordvpn connect south_korea` → JP 서버에서 계속 실패 + `$HOME` 미정의 에러 |
+| 12:00 추적 크론 시간대 충돌 | 수집 서비스(07:00~23:00) 도중 추적 크론(12:00) 실행 → Chrome 동시 2개 → CPU 폭증 → NordVPN 불안정 |
+
+#### 조치 내용
 
 ```bash
-# 1. SSH 접속 (JP 서버 IP 확인 후)
-ssh -i ~/Downloads/insta_tiktok.pem ubuntu@{JP_SERVER_IP}
+# 1. nordvpn-autoconnect.service 수정
+# - south_korea → Japan
+# - User=ubuntu + Environment=HOME=/home/ubuntu 추가
+sudo vi /etc/systemd/system/nordvpn-autoconnect.service
+sudo systemctl daemon-reload && sudo systemctl restart nordvpn-autoconnect.service
+# → Active: active (exited) / status=0/SUCCESS
 
-# 2. 코드 배포
-git clone {repo_url} /srv/insta_scrap
-cd /srv/insta_scrap
-cp env.example .env   # .env 편집 (jp 계정, jp DB 설정)
-
-# 3. 의존성 설치
-poetry install --no-root
-poetry run playwright install chromium
-poetry run playwright install-deps chromium
-
-# 4. NordVPN japan 연결
-nordvpn set autoconnect on japan
-nordvpn connect japan
-
-# 5. run_safe.sh 생성 (KR과 동일)
-# (D6에서 만든 스크립트 그대로 복사)
-
-# 6. systemd 서비스 등록
-sudo cp scripts/insta-scraper@.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable insta-scraper@jp
-sudo systemctl start insta-scraper@jp
-
-# 7. cron 등록 (헬스체크)
-(crontab -l; echo "0 * * * * cd /srv/insta_scrap && poetry run python scripts/health_check.py --profile jp > /dev/null 2>&1") | crontab -
+# 2. JP cron에서 12:00 추적 크론 제거
+sudo sed -i '/0 12 .* track_views/d' /etc/cron.d/insta-jp
+# → JP 추적 스케줄: 00:00 1회만 유지 (KR과 동일)
 ```
 
-#### US 서버 셋업
+---
 
-- `accounts.yaml` - `YOUR_US_INSTAGRAM_ACCOUNT` → 실계정 교체 필요
+### D8 (미정) — US 서버 셋업 ← **다음 단계**
+
+**전제 조건**: 미국 Instagram 계정 확보
+
+- `accounts.yaml` us 프로파일 계정 입력
+- KR 스냅샷 → US 리전 인스턴스 생성
 - NordVPN: `nordvpn connect united_states`
-- 타임존: `America/New_York` (서버 및 브라우저 설정)
-- JP와 동일한 절차로 셋업
-
-#### 확인 체크리스트 (서버당)
-
-- [ ] `sudo systemctl status insta-scraper@jp` — active (running)
-- [ ] `journalctl -u insta-scraper@jp -f` — 수집 로그 정상
-- [ ] Slack 수집 알림 수신
-- [ ] DB `instagram_reels` 에 `country_code='jp'` 데이터 적재 확인
-- [ ] `/tmp/insta-scraper-jp.lock` 파일 존재 확인 (flock 동작 중)
+- 타임존: `America/New_York`
+- JP와 동일한 절차로 셋업 (`.workflow/server-settings.md` 참조)
 
 ---
 
@@ -950,7 +1000,7 @@ LIMIT 50;
 | 고객사 DB 기존 데이터 확인 (테이블명 충돌 여부) | 담당자     | ✅ 완료 |
 | 고객사 DB 테이블 구조 명세서 전달          | 담당자     | ⏳ 대기 |
 | **KR Lightsail 고정 IP 할당**     | 담당자     | ✅ 완료 (43.200.196.211) |
-| **JP 서버 셋업**                  | 담당자     | ⏳ D7  |
+| **JP 서버 셋업**                  | 담당자     | ✅ 완료 (43.201.192.125) |
 | US 서버 셋업                      | 담당자     | ⏳ 계정 확보 후 |
 
 
@@ -968,5 +1018,157 @@ LIMIT 50;
 | Instagram 로그인 세션 만료   | 저   | SessionManager 구현됨, 자동 재로그인 동작 확인         |
 | S3 업로드 실패             | 저   | 원본 CDN URL fallback (수집 중단 없음)            |
 | **디스크 용량 초과 (로그 폭발)** | **중** | **logrotate + rotation="50 MB" + health_check 디스크 모니터링 (D4.5)** |
+| **버스트 크레딧 지속 하향** | **중** | **→ D9 계획안 참조** |
 
+
+---
+
+## D9 — 버스트 크레딧 자동 관리 ← **진행 중**
+
+**배경**: 2026-03-25, 2026-03-31 KR/JP 버스트 크레딧 소진 반복 → 수동 서비스 중지 필요
+**방향**: A → B → C 순서로 하나씩 작업 → 서버 테스트 → 커밋 반복
+
+### 배경 지식
+
+| 항목 | 내용 |
+|------|------|
+| 인스턴스 | Lightsail $24 (2 vCPU, 4GB RAM) |
+| 베이스라인 CPU | ~40% (이 이상 사용 시 크레딧 소모) |
+| 수집 중 평균 CPU | ~150% (2 vCPU 기준) → 크레딧 순소모 |
+| 크레딧 직접 조회 | 불가 (Lightsail IMDSv2 제한, CloudWatch 접근 없음) |
+| 크레딧 간접 측정 | **`/proc/stat` steal time** — 하이퍼바이저에 막힌 CPU 시간 = 크레딧 소진 지표 |
+| 현행 사이클 | 20분 수집 / 40분 휴식, 07:00~23:00 (16h) |
+
+**문제**: 16시간 운영 중 크레딧 회복이 소비를 못 따라잡아 장기 하향세
+
+---
+
+### D9-A — 운영 시간 축소 + 점심 강제 휴식 ✅ 완료 (2026-03-31)
+
+**작업 범위**: KR/JP 서버 cron 파일만 수정 (코드 변경 없음)
+
+```
+현재: 07:00 ──────────────────────── 23:00  (16h 운영, 야간 회복 8h)
+변경: 09:00 ── 13:00[2h 휴] ── 15:00 ── 21:00  (10h 운영, 야간 회복 12h)
+```
+
+변경 내용:
+- 시작 07:00 → 09:00 (야간 크레딧 회복 2h 추가)
+- 종료 23:00 → 21:00 (야간 크레딧 회복 2h 추가)
+- 13:00 ~ 15:00 점심 강제 휴식 추가 (2h 크레딧 회복)
+- 순 운영 시간: 16h → 10h (37.5% 감소)
+
+```cron
+# /etc/cron.d/insta-{국가} 변경안
+0 9  * * * ubuntu sudo systemctl start insta-scraper@{국가}.service
+0 13 * * * ubuntu sudo systemctl stop  insta-scraper@{국가}.service
+0 15 * * * ubuntu sudo systemctl start insta-scraper@{국가}.service
+0 21 * * * ubuntu sudo systemctl stop  insta-scraper@{국가}.service
+```
+
+테스트 기준:
+- [ ] KR/JP cron 적용 후 09:00 자동 시작 확인
+- [ ] 13:00 자동 중지 확인
+- [ ] 15:00 자동 재시작 확인
+- [ ] 21:00 자동 중지 확인
+- [ ] 다음날 크레딧 상태 개선 여부 확인 (steal % 모니터링)
+
+커밋 대상: 코드 변경 없음, `server-settings.md` cron 섹션 업데이트
+
+---
+
+### D9-B — Steal time 기반 자동 대기 ✅ 완료 (2026-03-31)
+
+**작업 범위**: `run_safe.sh` 수정 (서버 직접 배포, 코드 변경 없음)
+
+매 사이클 시작 전 steal time을 측정하고, 크레딧 소진 상태면 자동 대기 후 재도전.
+
+```
+20분 수집 종료 → systemd 40분 대기 → run_safe.sh 실행
+                                           ↓
+                                     steal time 측정 (2초 샘플)
+                                   ┌── ≤5% → 수집 바로 시작
+                                   └── >5% → 60초 대기 후 재측정 (최대 1시간)
+```
+
+```bash
+# run_safe.sh — check_steal 함수 + 대기 루프 추가
+
+check_steal() {
+    read -r cpu u n s id io irq si st _ < /proc/stat; sleep 2
+    read -r cpu u2 n2 s2 id2 io2 irq2 si2 st2 _ < /proc/stat
+    steal_diff=$((st2 - st))
+    total_diff=$(( (u2+n2+s2+id2+io2+irq2+si2+st2) - (u+n+s+id+io+irq+si+st) ))
+    [ "$total_diff" -gt 0 ] && echo $((steal_diff * 100 / total_diff)) || echo 0
+}
+
+STEAL_THRESHOLD=5   # steal 5% 초과 = 크레딧 소진 상태
+MAX_CREDIT_WAIT=3600  # 최대 1시간 대기 후 강제 시작
+
+WAITED=0
+while true; do
+    STEAL=$(check_steal)
+    if [ "$STEAL" -le "$STEAL_THRESHOLD" ]; then
+        echo "$(date): steal ${STEAL}% — 크레딧 충분, 시작"; break
+    fi
+    if [ "$WAITED" -ge "$MAX_CREDIT_WAIT" ]; then
+        echo "$(date): steal ${STEAL}% — 최대 대기 초과, 강제 시작"; break
+    fi
+    echo "$(date): steal ${STEAL}% > ${STEAL_THRESHOLD}% — 크레딧 부족, 60초 대기"
+    sleep 60; WAITED=$((WAITED + 60))
+done
+```
+
+주의사항:
+- steal은 "현재 소진 중" 지표이지 잔량 절대값이 아님
+- systemd RestartSec(40분) + steal 대기(최대 1시간) = 최대 1시간 40분 대기 가능
+
+테스트 기준:
+- [ ] steal > 5% 상태에서 실행 시 대기 로그 출력 확인
+- [ ] steal ≤ 5% 복구 후 자동 시작 확인
+- [ ] 1시간 초과 시 강제 시작 동작 확인
+- [ ] journalctl에서 steal 측정 로그 확인
+
+커밋 대상: `run_safe.sh` 변경 → `server-settings.md` 업데이트 → 커밋
+
+---
+
+### D9-C — Chrome 렌더러 제한으로 CPU 소모 감소 ✅ 완료 (2026-03-31)
+
+**작업 범위**: `src/browser.py` 코드 수정 + `.env` 수정 + 서버 배포
+
+```python
+# src/browser.py — Chromium 실행 플래그 추가
+"--renderer-process-limit=1",            # 렌더러 프로세스 1개로 제한
+"--js-flags=--max-old-space-size=512",   # V8 힙 512MB 상한
+```
+
+```env
+# .env
+REQUEST_DELAY=3.0   # 기존 2.0 → 3.0초 (릴스 간 딜레이 증가)
+```
+
+예상 효과:
+- 수집 중 CPU: ~150% → ~100% 수준으로 감소 예상
+- 수집량: 20분 85개 → 약 65~70개 예상 (딜레이 증가 영향)
+
+테스트 기준:
+- [ ] 수집 중 CPU 사용률 측정 (vmstat로 us% 확인)
+- [ ] steal % 개선 여부 확인
+- [ ] 수집 건수 감소폭 허용 범위 내인지 확인 (목표: 60개 이상/20분)
+- [ ] 기존과 동일하게 릴스 수집 정상 동작 확인
+
+커밋 대상: `src/browser.py`, `.env` 샘플 업데이트, `roadmap-production.md` 결과 기록
+
+---
+
+### 진행 순서 요약
+
+| 순서 | 작업 | 상태 | 비고 |
+|------|------|------|------|
+| D9-A | cron 운영 시간 축소 | ✅ 완료 | KR/JP 서버 cron 업데이트 완료 |
+| D9-B | run_safe.sh steal 체크 | ✅ 완료 | KR/JP run_safe.sh 업데이트 완료 |
+| D9-C | Chrome 렌더러 제한 | ✅ 완료 | browser.py + config.py 수정, git push 후 서버 배포 |
+
+> A+B+C 모두 적용 시 크레딧 소진 가능성 대폭 감소 예상. C까지 완료 후 1주일 모니터링으로 효과 검증.
 

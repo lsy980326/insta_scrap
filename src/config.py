@@ -59,7 +59,7 @@ class ScrapingConfig(BaseSettings):
     scrape_run_minutes: int | None = Field(
         default=None, ge=1, description="수집 최대 실행 시간 (분). systemd RestartSec와 조합해 burst credit 회복"
     )
-    request_delay: float = Field(default=2.0, ge=0.0, description="요청 간 딜레이 (초)")
+    request_delay: float = Field(default=3.0, ge=0.0, description="요청 간 딜레이 (초)")
 
     @field_validator("max_reels", "scrape_run_minutes", mode="before")
     @classmethod

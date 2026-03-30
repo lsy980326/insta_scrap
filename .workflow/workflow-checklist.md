@@ -43,12 +43,30 @@
 - [x] 7단계: Sentry + GPU 최적화 + burst credit 회복 사이클
 - [x] 8단계: 추적 모듈 DB 기반 전환 (track_from_db, --from-db, 이미지 차단, 배치 휴식, 시간대 분리 cron)
 - [x] 9단계: KR 운영 안정화 완료 (collected_at KST, Slack/CDN DNS 재시도, Cron 정리, CPU Steal 모니터링)
-- [ ] 10단계: JP 서버 셋업
+- [x] 10단계: JP 서버 셋업
+- [ ] 11단계: US 서버 셋업 (미국 계정 확보 후)
 
 - ✅ **KR 서버 재시작 복구 (D6.12)**: IP 변경(3.38.183.221 → 43.201.149.219), 수집 서비스 자동 재개 확인
 
+- ✅ **JP 서버 셋업 (D7)**: 43.201.192.125, NordVPN Japan, systemd + cron 등록, 수집 정상 가동 확인
+- ✅ **서버 설정 문서화**: `.workflow/server-settings.md` 생성 (공통 + 국가별 설정 레퍼런스)
+- ✅ **KR 계정 변경 반영 (D7)**: trendboardmvp004@gmail.com, accounts.yaml KR/JP 서버 배포
+- ✅ **KR NordVPN 재부팅 후 단절 복구 (D7)**: 재부팅 후 autoconnect 미작동 → 수동 재연결
+- ✅ **title 추출 버그 수정 2차 (D7)**: root 범위에 캡션 없는 경우 API 캐시 caption fallback 추가 (`_parse_and_cache_reels` + `_extract_current_reel_data`), 잘못된 page 전체 fallback 제거
+- ✅ **JP 버스트 크레딧 고갈 대응 (D7)**: 신규 인스턴스 크레딧 미지급으로 서버 다운 → 재부팅 후 복구, 크레딧 회복 필요
+- ✅ **KR/JP scraper.py 패치 배포 완료 (D7)**
+- ✅ **추적 모듈 스크롤 5 → 10회 (D7)**
+- ✅ **JP 서버 KR 크론 잔재 제거 (D7)**: 스냅샷 생성 시 `insta-scraper-kr` 크론이 JP 서버에 복제됨 → KR 추적이 KR/JP 서버 양쪽에서 중복 실행되는 버그 수정. JP에서 `/etc/cron.d/insta-scraper-kr` 삭제
+
+- ✅ **JP 장애 수정 (D7.5)**: nordvpn-autoconnect.service south_korea→Japan+HOME 수정, 12:00 추적 크론 제거 (수집과 시간대 충돌 방지)
+- ✅ **KR/JP 전체 점검 (D7.6)**: KR nordvpn-autoconnect HOME 수정, JP 잔재 KR 서비스(`insta-scraper@kr`) stop+disable (JP RAM 3.5GB→2.1GB 회복)
+
+- ✅ **버스트 크레딧 고갈 대응 D9-A (D9)**: KR/JP 운영 시간 단축 (07-23h → 09-13h + 15-21h, 10h/일), 점심 휴식 2h 추가
+- ✅ **버스트 크레딧 고갈 대응 D9-B (D9)**: run_safe.sh CPU steal time 체크 추가 (steal>5% 시 최대 1h 대기 후 수집 시작), KR/JP 서버 동시 적용
+- ✅ **버스트 크레딧 고갈 대응 D9-C (D9)**: browser.py `--renderer-process-limit=1` + `--js-flags=--max-old-space-size=512` 추가, request_delay 2.0→3.0초 기본값 변경
+
 ### 완료 상태
-진행 중 — KR 재가동 확인, JP 서버 셋업 대기 / KR 고정 IP 할당 필요
+진행 중 — KR/JP 운영 중, US 서버 셋업 대기 (미국 계정 확보 필요)
 
 ---
 

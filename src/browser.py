@@ -99,6 +99,8 @@ class BrowserManager:
                 "--disable-accelerated-video-encode",  # HW 비디오 인코딩 비활성화
                 "--num-raster-threads=1",              # 래스터화 스레드 1개로 제한
                 "--disable-partial-raster",            # 부분 래스터화 비활성화
+                "--renderer-process-limit=1",          # 렌더러 프로세스 1개로 제한 (메모리/CPU 절감)
+                "--js-flags=--max-old-space-size=512", # V8 힙 상한 512MB (OOM 방지)
             ]
 
             # 브라우저 실행 옵션
