@@ -1018,12 +1018,12 @@ LIMIT 50;
 | Instagram 로그인 세션 만료   | 저   | SessionManager 구현됨, 자동 재로그인 동작 확인         |
 | S3 업로드 실패             | 저   | 원본 CDN URL fallback (수집 중단 없음)            |
 | **디스크 용량 초과 (로그 폭발)** | **중** | **logrotate + rotation="50 MB" + health_check 디스크 모니터링 (D4.5)** |
-| **버스트 크레딧 지속 하향** | **중** | **→ D9 계획안 참조** |
+| **버스트 크레딧 지속 하향** | **중** | **D9 완료 (운영시간 축소 + steal 자동대기 + Chrome 제한) — 모니터링 중** |
 
 
 ---
 
-## D9 — 버스트 크레딧 자동 관리 ← **진행 중**
+## D9 — 버스트 크레딧 자동 관리 ✅ 완료 (2026-03-31)
 
 **배경**: 2026-03-25, 2026-03-31 KR/JP 버스트 크레딧 소진 반복 → 수동 서비스 중지 필요
 **방향**: A → B → C 순서로 하나씩 작업 → 서버 테스트 → 커밋 반복
@@ -1171,4 +1171,21 @@ REQUEST_DELAY=3.0   # 기존 2.0 → 3.0초 (릴스 간 딜레이 증가)
 | D9-C | Chrome 렌더러 제한 | ✅ 완료 | browser.py + config.py 수정, git push 후 서버 배포 |
 
 > A+B+C 모두 적용 시 크레딧 소진 가능성 대폭 감소 예상. C까지 완료 후 1주일 모니터링으로 효과 검증.
+
+### 현황 (2026-03-31)
+
+- KR/JP 서버 모두 D9-A/B/C 적용 완료 + git pull 배포 완료
+- **오늘(2026-03-31) 하루 수집 중단**: KR/JP cron start 라인 주석 처리 (버스트 크레딧 풀 회복 목적)
+  - `/etc/cron.d/insta-scraper-kr` — 09:00, 15:00 start 주석 처리
+  - `/etc/cron.d/insta-jp` — 09:00, 15:00 start 주석 처리
+- **재개 시**: 각 서버 cron 파일에서 start 라인 주석 해제 필요
+  ```bash
+  # KR
+  sudo sed -i 's/^#0 9 \* \* \* ubuntu sudo systemctl start insta-scraper@kr/0 9 * * * ubuntu sudo systemctl start insta-scraper@kr/' /etc/cron.d/insta-scraper-kr
+  sudo sed -i 's/^#0 15 \* \* \* ubuntu sudo systemctl start insta-scraper@kr/0 15 * * * ubuntu sudo systemctl start insta-scraper@kr/' /etc/cron.d/insta-scraper-kr
+
+  # JP
+  sudo sed -i 's/^#0 9 \* \* \* ubuntu sudo systemctl start insta-scraper@jp/0 9 * * * ubuntu sudo systemctl start insta-scraper@jp/' /etc/cron.d/insta-jp
+  sudo sed -i 's/^#0 15 \* \* \* ubuntu sudo systemctl start insta-scraper@jp/0 15 * * * ubuntu sudo systemctl start insta-scraper@jp/' /etc/cron.d/insta-jp
+  ```
 
