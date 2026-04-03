@@ -2203,6 +2203,10 @@ class InstagramReelsScraper:
                         consecutive_failures += 1
                         self.logger.warning(f"다음 릴스로 이동하지 못했습니다 ({consecutive_failures}/{max_failures}). 잠시 대기 후 재시도...")
 
+                        # 팝업이 포커스를 가져갔을 수 있으므로 닫기 시도
+                        if self._check_and_close_popup(page):
+                            self.logger.info("팝업 감지 및 닫기 완료 — 이동 재시도")
+
                         if consecutive_failures >= max_failures:
                             self.logger.error(f"연속 {max_failures}회 이동 실패. 수집 중단.")
                             break
