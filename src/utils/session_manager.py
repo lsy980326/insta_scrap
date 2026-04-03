@@ -77,13 +77,8 @@ class SessionManager:
             세션이 유효하면 True, 아니면 False
         """
         try:
-            # 세션 검증 URL 선택
-            # account_id가 이메일 형태면 username 부분만 추출 (cxv963@naver.com → cxv963)
-            if account_id:
-                username_part = account_id.split("@")[0] if "@" in account_id else account_id
-                verify_url = f"https://www.instagram.com/{username_part}/"
-            else:
-                verify_url = "https://www.instagram.com/accounts/edit/"
+            # 세션 검증 URL — 로그인 필수 페이지 사용 (프로필 페이지는 비로그인도 접근 가능하여 오판 발생)
+            verify_url = "https://www.instagram.com/accounts/edit/"
 
             logger.info(f"세션 검증 중: {verify_url}")
             page.goto(verify_url, wait_until="domcontentloaded", timeout=10000)
