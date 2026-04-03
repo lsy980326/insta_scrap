@@ -2093,6 +2093,15 @@ class InstagramReelsScraper:
                     self.logger.info(f"⏱️ 수집 시간 {self.config.scrape_run_minutes}분 경과 — 정상 종료 (크레딧 회복 대기 중)")
                     break
                 try:
+                    # 수집 중 로그인 리다이렉트 감지 — 세션 만료 시 재로그인 후 릴스 탭으로 복귀
+                    current_url = page.evaluate("window.location.href")
+                    if "accounts/login" in current_url or "/login" in current_url:
+                        self.logger.warning(f"수집 중 로그인 페이지 감지 — 세션 만료, 재로그인 시도: {current_url}")
+                        self._is_logged_in = False
+                        self.login()
+                        consecutive_failures = 0
+                        continue
+
                     # 릴스 전환 직후 DOM이 재사용/지연 갱신되는 경우가 있어,
                     # video poster가 바뀔 때까지 짧게 기다린 뒤 수집한다.
                     try:
