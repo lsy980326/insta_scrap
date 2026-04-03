@@ -1958,6 +1958,9 @@ class InstagramReelsScraper:
                 viewport = page.viewport_size
                 if viewport:
                     viewport_height = viewport["height"]
+                    # 스크롤 전 화면 중앙 클릭으로 포커스 복원 (팝업/오버레이 포커스 탈취 방지)
+                    page.mouse.click(viewport["width"] // 2, viewport["height"] // 2)
+                    time.sleep(0.3)
                     # 화면 중앙에서 아래로 화면 높이만큼 스크롤 (1번만)
                     page.mouse.move(viewport["width"] // 2, viewport["height"] // 2)
                     page.mouse.wheel(0, viewport_height)
