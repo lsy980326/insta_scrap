@@ -179,6 +179,13 @@ class InstagramReelsScraper:
 
             page = self.browser_manager.get_page()
 
+            # 잔여 쿠키 클리어 — 만료된 세션 쿠키가 남아있으면 Instagram이
+            # "계속하기" 화면을 보여줘 로그인 폼이 뜨지 않을 수 있음
+            try:
+                self.browser_manager.context.clear_cookies()
+            except Exception:
+                pass
+
             # ── 로그인 페이지 직접 접근 ──────────────────────────────────────
             # 메인 페이지(/)에서 로그인 링크를 찾는 방식은 UI 변경에 취약.
             # /accounts/login/ 은 항상 로그인 폼을 보여주므로 직접 이동.
