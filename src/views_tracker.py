@@ -383,8 +383,8 @@ class ReelViewsTracker:
 
         text = text.strip().replace(",", "").replace(" ", "")
 
-        # 만 단위 처리
-        if "만" in text:
+        # 만 단위 처리 (한국어: 만, 일본어: 万)
+        if "만" in text or "万" in text:
             match = re.search(r"([\d.]+)", text)
             if match:
                 try:
@@ -393,13 +393,33 @@ class ReelViewsTracker:
                 except ValueError:
                     pass
 
-        # 천 단위 처리
-        elif "천" in text:
+        # 억 단위 처리 (일본어: 億)
+        elif "억" in text or "億" in text:
+            match = re.search(r"([\d.]+)", text)
+            if match:
+                try:
+                    num = float(match.group(1))
+                    return int(num * 100000000)
+                except ValueError:
+                    pass
+
+        # 천 단위 처리 (한국어: 천, 일본어: 千, 영어: K/k)
+        elif "천" in text or "千" in text or text.upper().endswith("K"):
             match = re.search(r"([\d.]+)", text)
             if match:
                 try:
                     num = float(match.group(1))
                     return int(num * 1000)
+                except ValueError:
+                    pass
+
+        # 백만 단위 처리 (영어: M)
+        elif text.upper().endswith("M"):
+            match = re.search(r"([\d.]+)", text)
+            if match:
+                try:
+                    num = float(match.group(1))
+                    return int(num * 1000000)
                 except ValueError:
                     pass
 
@@ -567,19 +587,21 @@ class ReelViewsTracker:
                                             // 1. 조회수 찾기: _aaj_ 안에 조회수 아이콘과 숫자
                                             const viewsContainer = parent.querySelector('div._aaj_');
                                             if (viewsContainer && !result.views) {
-                                                const viewsIcon = viewsContainer.querySelector('svg[aria-label*="조회수"], svg[aria-label*="view"]');
-                                                if (viewsIcon) {
-                                                    // 아이콘 다음 형제 요소에서 숫자 찾기
-                                                    let sibling = viewsIcon.parentElement;
-                                                    if (sibling) {
-                                                        // 같은 부모의 span 요소들 찾기
-                                                        const spans = sibling.parentElement.querySelectorAll('span');
-                                        for (const span of spans) {
-                                            const text = (span.textContent || '').trim();
-                                                            if (/^[\\d.,만천]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
-                                                                result.views = text;
-                                                                break;
-                                                            }
+                                                // aria-label 다국어 지원 (한국어/영어/일본어) + fallback
+                                                const viewsIcon = viewsContainer.querySelector(
+                                                    'svg[aria-label*="조회수"], svg[aria-label*="view"], svg[aria-label*="View"], ' +
+                                                    'svg[aria-label*="再生"], svg[aria-label*="視聴"], svg[aria-label*="回再生"]'
+                                                );
+                                                const searchIn = viewsIcon
+                                                    ? viewsIcon.parentElement
+                                                    : viewsContainer;  // fallback: 컨테이너 전체에서 숫자 탐색
+                                                if (searchIn) {
+                                                    const spans = searchIn.querySelectorAll ? searchIn.querySelectorAll('span') : searchIn.parentElement.querySelectorAll('span');
+                                                    for (const span of spans) {
+                                                        const text = (span.textContent || '').trim();
+                                                        if (/^[\\d.,만천万千億億억kKmM]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
+                                                            result.views = text;
+                                                            break;
                                                         }
                                                     }
                                                 }
@@ -598,11 +620,11 @@ class ReelViewsTracker:
                                                         const spans = firstLi.querySelectorAll('span.html-span.x1vvkbs');
                                                         for (const span of spans) {
                                                             const text = (span.textContent || '').trim();
-                                                            if (/^[\\d.,만천]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
+                                                            if (/^[\\d.,만천万千億億억kKmM]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
                                                                 result.likes = text;
                                                                 break;
-                                            }
-                                        }
+                                                            }
+                                                        }
                                                     }
 
                                                     // 두 번째 li: 댓글 (아래)
@@ -611,7 +633,7 @@ class ReelViewsTracker:
                                                         const spans = secondLi.querySelectorAll('span.html-span.x1vvkbs');
                                                         for (const span of spans) {
                                                             const text = (span.textContent || '').trim();
-                                                            if (/^[\\d.,만천]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
+                                                            if (/^[\\d.,만천万千億億억kKmM]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
                                                                 result.comments = text;
                                                                 break;
                                                             }
