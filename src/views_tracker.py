@@ -698,9 +698,7 @@ class ReelViewsTracker:
                                         if len(metrics_dict) >= len(target_reel_ids):
                                             break
                                 else:
-                                    # 디버깅: 통계를 못 찾은 경우 로그
-                                    if scroll_attempt == 0:  # 첫 시도에서만 로그
-                                        self.logger.debug(f"통계 추출 실패 (릴스 ID: {reel_id}) - 링크는 찾았지만 통계 정보를 찾을 수 없습니다")
+                                    self.logger.debug(f"통계 추출 실패 (릴스 ID: {reel_id}) - 링크는 찾았지만 통계 정보를 찾을 수 없습니다")
 
                         except Exception as e:
                             self.logger.debug(f"조회수 추출 실패 (릴스 ID: {reel_id}): {e}")
@@ -733,6 +731,77 @@ class ReelViewsTracker:
                     except Exception as e:
                         self.logger.debug(f"스크롤 실패: {e}")
                         break
+
+            # 크리에이터 페이지에서 못 찾은 릴스 → 직접 URL fallback
+            missing_ids = target_reel_ids - set(metrics_dict.keys())
+            if missing_ids:
+                self.logger.info(f"크리에이터 페이지에서 미발견 {len(missing_ids)}개 → 직접 URL fallback 시도")
+                for reel_id in missing_ids:
+                    try:
+                        direct_url = f"https://www.instagram.com/reels/{reel_id}/"
+                        page.goto(direct_url, wait_until="domcontentloaded", timeout=20000)
+                        random_delay(1.5, 2.5)
+                        metrics = page.evaluate("""
+                            () => {
+                                const result = { views: null, likes: null, comments: null };
+                                const numRe = /^[\\d.,万千億억만천kKmM]+$/;
+
+                                // section 안의 버튼/링크에서 aria-label로 구분
+                                const section = document.querySelector('section');
+                                if (section) {
+                                    const btns = section.querySelectorAll('button, a[href*="liked_by"], a[href*="comments"]');
+                                    for (const btn of btns) {
+                                        const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                                        const spans = btn.querySelectorAll('span');
+                                        for (const s of spans) {
+                                            const t = (s.textContent || '').trim();
+                                            if (!numRe.test(t.replace(/\\s/g,'')) || !t) continue;
+                                            if (/like|좋아요|いいね|赞/.test(label) && !result.likes) { result.likes = t; break; }
+                                            if (/comment|댓글|コメント|评论/.test(label) && result.comments === null) { result.comments = t; break; }
+                                        }
+                                    }
+                                    // 버튼 aria-label 실패 시 section 내 고유 숫자 순서대로
+                                    if (!result.likes && result.comments === null) {
+                                        const seen = new Set();
+                                        const uniq = [];
+                                        section.querySelectorAll('span').forEach(s => {
+                                            const t = (s.textContent || '').trim();
+                                            if (numRe.test(t.replace(/\\s/g,'')) && t && t.length < 12 && !seen.has(t)) {
+                                                seen.add(t); uniq.push(t);
+                                            }
+                                        });
+                                        if (uniq.length >= 1) result.likes = uniq[0];
+                                        if (uniq.length >= 2) result.comments = uniq[1];
+                                    }
+                                }
+                                // 조회수: video aria-label 또는 meta
+                                const videoMeta = document.querySelector('meta[property="og:video:duration"]');
+                                const viewSpan = document.querySelector('span[aria-label*="view"], span[aria-label*="조회"], span[aria-label*="再生"]');
+                                if (viewSpan) {
+                                    const t = (viewSpan.textContent || '').trim();
+                                    if (numRe.test(t.replace(/\\s/g,''))) result.views = t;
+                                }
+                                return result;
+                            }
+                        """)
+                        parsed = {}
+                        if metrics.get('views'):
+                            v = self._parse_number(metrics['views'])
+                            if v and v > 0: parsed['views'] = v
+                        if metrics.get('likes'):
+                            l = self._parse_number(metrics['likes'])
+                            if l and l > 0: parsed['likes'] = l
+                        if metrics.get('comments') is not None:
+                            c = self._parse_number(metrics['comments'])
+                            if c is not None and c >= 0: parsed['comments'] = c
+                        if parsed:
+                            metrics_dict[reel_id] = parsed
+                            self.logger.info(f"직접 URL fallback 성공: {reel_id} — {parsed}")
+                        else:
+                            self.logger.info(f"직접 URL fallback 실패 (통계 없음): {reel_id}")
+                        random_delay(1.0, 2.0)
+                    except Exception as e:
+                        self.logger.warning(f"직접 URL fallback 오류 ({reel_id}): {e}")
 
             # 추출된 통계 요약 로그
             total_found = len(metrics_dict)
