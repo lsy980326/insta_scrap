@@ -894,7 +894,7 @@ class ReelViewsTracker:
         for _pat in ("**/*.jpg", "**/*.jpeg", "**/*.png", "**/*.webp", "**/*.gif", "**/*.avif"):
             page.route(_pat, _abort)
 
-    def track_from_db(self, country_code: str, days: int = 7) -> int:
+    def track_from_db(self, country_code: str, days: int = 7, notifier=None, profile: str = "") -> int:
         """
         DB에서 최근 N일 릴스를 로드하여 views/likes/comments 추적
 
@@ -945,11 +945,15 @@ class ReelViewsTracker:
 
         self.logger.info(f"크리에이터 {len(creator_reels)}명 대상")
 
+        if notifier:
+            notifier.send_track_start(profile or country_code, len(reels), len(creator_reels))
+
         total_updated = 0
         failed_creators = []
         batch_size = self.config.track_batch_size
         batch_sleep = self.config.track_batch_sleep
         creators = list(creator_reels.items())
+        total_batches = -(-len(creators) // batch_size)  # ceiling division
 
         for batch_idx, batch_start in enumerate(range(0, len(creators), batch_size)):
             batch = creators[batch_start:batch_start + batch_size]
@@ -1007,6 +1011,16 @@ class ReelViewsTracker:
                         page = self.browser_manager.get_page()
                         self._block_images_for_tracking(page)
 
+            # 배치 완료 진행상황 알림
+            done_creators = min(batch_start + batch_size, len(creators))
+            if notifier:
+                notifier.send_track_progress(
+                    profile or country_code,
+                    batch_idx + 1, total_batches,
+                    done_creators, len(creators),
+                    total_updated,
+                )
+
             # 배치 간 휴식 (마지막 배치 제외)
             if batch_start + batch_size < len(creators) and batch_sleep > 0:
                 self.logger.info(f"⏱️ 배치 휴식 {batch_sleep}초 (burst credit 회복 중...)")
@@ -1017,6 +1031,7 @@ class ReelViewsTracker:
 
         self.logger.info(f"DB 추적 완료: {total_updated}개 릴스 업데이트")
         self.tracked_count = total_updated
+        self._failed_creators_last = failed_creators
         return total_updated
 
     def _update_views_in_db(

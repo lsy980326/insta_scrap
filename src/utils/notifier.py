@@ -109,13 +109,32 @@ class SlackNotifier:
             f"수집 속도 저하 예상. 서비스 일시 중단 고려 필요."
         )
 
-    def send_track_summary(self, profile: str, tracked_count: int, duration_sec: int) -> None:
+    def send_track_start(self, profile: str, total_reels: int, total_creators: int) -> None:
+        flag = _flag(profile)
+        self._post(
+            f"{flag} *[{profile.upper()}] 추적 시작*\n"
+            f"대상: 릴스 {total_reels}개 / 크리에이터 {total_creators}명"
+        )
+
+    def send_track_progress(self, profile: str, batch_idx: int, total_batches: int,
+                            done_creators: int, total_creators: int, updated: int) -> None:
+        flag = _flag(profile)
+        self._post(
+            f"{flag} *[{profile.upper()}] 추적 진행 중*\n"
+            f"배치 {batch_idx}/{total_batches} — "
+            f"크리에이터 {done_creators}/{total_creators}명 | 업데이트 {updated}건"
+        )
+
+    def send_track_summary(self, profile: str, tracked_count: int, duration_sec: int,
+                           failed_count: int = 0) -> None:
         flag = _flag(profile)
         mins = duration_sec // 60
         secs = duration_sec % 60
+        result = "✅ 성공" if failed_count == 0 else f"⚠️ 일부 실패 ({failed_count}명 오류)"
         self._post(
-            f"{flag} *[{profile.upper()}] 추적 완료*\n"
-            f"추적 건수: {tracked_count}건 | 소요 시간: {mins}분 {secs}초"
+            f"{flag} *[{profile.upper()}] 추적 완료* {result}\n"
+            f"업데이트: {tracked_count}건 | 소요: {mins}분 {secs}초"
+            + (f" | 실패: {failed_count}명" if failed_count > 0 else "")
         )
 
 

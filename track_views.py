@@ -107,13 +107,17 @@ def main() -> None:
                 # DB 기반 추적 (--from-db)
                 country_code = config.country_code or profile
                 logger.info(f"DB 기반 추적 시작: {country_code}, 최근 {args.days}일")
-                tracked_count = tracker.track_from_db(country_code=country_code, days=args.days)
+                tracked_count = tracker.track_from_db(
+                    country_code=country_code, days=args.days,
+                    notifier=notifier, profile=profile,
+                )
                 duration = int(time.time() - start_time)
+                failed_count = len(getattr(tracker, "_failed_creators_last", []))
                 logger.info("=" * 60)
                 logger.info(f"DB 추적 완료: {tracked_count}개 릴스 업데이트")
                 logger.info("=" * 60)
                 if notifier:
-                    notifier.send_track_summary(profile, tracked_count, duration)
+                    notifier.send_track_summary(profile, tracked_count, duration, failed_count)
 
             else:
                 # 기존 JSON 파일 기반 추적
