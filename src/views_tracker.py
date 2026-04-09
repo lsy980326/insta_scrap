@@ -577,85 +577,49 @@ class ReelViewsTracker:
                                         const result = { views: null, likes: null, comments: null };
 
                                         // 링크의 부모 요소에서 통계 정보 찾기
+                                        // 부모 요소를 따라 올라가며 span.html-span.x1vvkbs 숫자 탐색
+                                        const numRe = /^[\\d.,만천万千億억kKmM]+$/;
                                         let parent = link.parentElement;
-                                        let depth = 0;
+                                        for (let depth = 0; depth < 8; depth++) {
+                                            if (!parent) break;
 
-                                        // 통계 컨테이너 찾기 (일반적으로 통계들이 함께 있는 컨테이너)
-                                        while (parent && depth < 5) {
-                                            // 구조 파악: _aajz > _aaj- (좋아요/댓글) > _aaj_ (조회수)
+                                            // x1vvkbs 클래스 span에서 숫자 수집 (고유값 순서 유지)
+                                            const spans = parent.querySelectorAll('span.x1vvkbs');
+                                            const nums = [];
+                                            const seen = new Set();
+                                            for (const s of spans) {
+                                                const t = (s.textContent || '').trim();
+                                                if (numRe.test(t.replace(/\\s/g,'')) && t && !seen.has(t)) {
+                                                    seen.add(t); nums.push(t);
+                                                }
+                                            }
 
-                                            // 1. 조회수 찾기: _aaj_ 안에 조회수 아이콘과 숫자
-                                            const viewsContainer = parent.querySelector('div._aaj_');
-                                            if (viewsContainer && !result.views) {
-                                                // aria-label 다국어 지원 (한국어/영어/일본어) + fallback
-                                                const viewsIcon = viewsContainer.querySelector(
+                                            if (nums.length >= 2) {
+                                                // 조회수(재생수) 아이콘이 있으면 첫번째가 views
+                                                const viewsIcon = parent.querySelector(
                                                     'svg[aria-label*="조회수"], svg[aria-label*="view"], svg[aria-label*="View"], ' +
-                                                    'svg[aria-label*="再生"], svg[aria-label*="視聴"], svg[aria-label*="回再生"]'
+                                                    'svg[aria-label*="再生"], svg[aria-label*="視聴"], svg[aria-label*="play"]'
                                                 );
-                                                const searchIn = viewsIcon
-                                                    ? viewsIcon.parentElement
-                                                    : viewsContainer;  // fallback: 컨테이너 전체에서 숫자 탐색
-                                                if (searchIn) {
-                                                    const spans = searchIn.querySelectorAll ? searchIn.querySelectorAll('span') : searchIn.parentElement.querySelectorAll('span');
-                                                    for (const span of spans) {
-                                                        const text = (span.textContent || '').trim();
-                                                        if (/^[\\d.,만천万千億億억kKmM]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
-                                                            result.views = text;
-                                                            break;
-                                                        }
-                                                    }
+                                                if (viewsIcon) {
+                                                    result.views = nums[0];
+                                                    result.likes = nums[1];
+                                                    if (nums.length >= 3) result.comments = nums[2];
+                                                } else {
+                                                    result.likes = nums[0];
+                                                    result.comments = nums[1];
+                                                    if (nums.length >= 3) result.views = nums[2];
                                                 }
-                                            }
-
-                                            // 2. 좋아요와 댓글 찾기: _aaj- 안에 ul > li 순서대로
-                                            const statsContainer = parent.querySelector('div._aaj-');
-                                            if (statsContainer) {
-                                                const ul = statsContainer.querySelector('ul');
-                                                if (ul) {
-                                                    const lis = Array.from(ul.querySelectorAll('li'));
-
-                                                    // 첫 번째 li: 좋아요 (위)
-                                                    if (lis.length > 0 && !result.likes) {
-                                                        const firstLi = lis[0];
-                                                        const spans = firstLi.querySelectorAll('span.html-span.x1vvkbs');
-                                                        for (const span of spans) {
-                                                            const text = (span.textContent || '').trim();
-                                                            if (/^[\\d.,만천万千億億억kKmM]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
-                                                                result.likes = text;
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-
-                                                    // 두 번째 li: 댓글 (아래)
-                                                    if (lis.length > 1 && result.comments === null) {
-                                                        const secondLi = lis[1];
-                                                        const spans = secondLi.querySelectorAll('span.html-span.x1vvkbs');
-                                                        for (const span of spans) {
-                                                            const text = (span.textContent || '').trim();
-                                                            if (/^[\\d.,만천万千億億억kKmM]+$/.test(text.replace(/\\s/g, '')) && text.length > 0) {
-                                                                result.comments = text;
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // 모든 통계를 찾았으면 종료
-                                            if (result.views && result.likes && result.comments !== null) {
                                                 break;
+                                            } else if (nums.length === 1) {
+                                                result.likes = nums[0];
                                             }
 
                                             parent = parent.parentElement;
-                                            depth++;
                                         }
 
-                                        // 하나라도 찾았으면 반환
                                         if (result.views || result.likes || result.comments !== null) {
                                             return result;
                                         }
-
                                         return null;
                                     }
                                 """)
