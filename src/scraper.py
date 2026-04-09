@@ -218,6 +218,7 @@ class InstagramReelsScraper:
             # 로그인 폼 대기 — autocomplete 속성은 UI 버전과 무관하게 안정적
             debug_dir = self.config.output_dir / "debug"
             debug_dir.mkdir(parents=True, exist_ok=True)
+            logged_in_via_button = False
             try:
                 page.wait_for_selector(
                     'input[autocomplete*="username"], input[type="text"]',
@@ -228,51 +229,73 @@ class InstagramReelsScraper:
                 try:
                     page.wait_for_selector("input", timeout=10000, state="visible")
                 except Exception:
-                    # 실패 시 현재 화면 스크린샷 저장 후 예외 전파
-                    page.screenshot(path=str(debug_dir / "login_failed.png"))
-                    self.logger.error(f"로그인 페이지 로드 실패 — URL: {page.url} / 스크린샷: {debug_dir}/login_failed.png")
-                    raise
+                    # input 폼 없음 — "기존 계정 확인" 화면 감지 후 버튼 클릭 시도
+                    # Instagram이 이미 알려진 계정을 인식해 간편 로그인 화면을 보여주는 경우
+                    username_part = username.split("@")[0] if "@" in username else username
+                    known_account_selectors = [
+                        f'button:has-text("{username_part}")',
+                        'button:has-text("自分のプロフィールを表示")',
+                        'button:has-text("View profile")',
+                        'button:has-text("내 프로필 보기")',
+                        'button:has-text("Continue as")',
+                        'button:has-text("계속")',
+                    ]
+                    for sel in known_account_selectors:
+                        try:
+                            btn = page.locator(sel).first
+                            if btn.is_visible(timeout=1500):
+                                self.logger.info(f"기존 계정 확인 화면 감지 — '{sel}' 클릭")
+                                btn.click()
+                                page.wait_for_timeout(3000)
+                                logged_in_via_button = True
+                                break
+                        except Exception:
+                            continue
 
-            self.logger.info(f"로그인 페이지 로드 완료: {page.url}")
+                    if not logged_in_via_button:
+                        page.screenshot(path=str(debug_dir / "login_failed.png"))
+                        self.logger.error(f"로그인 페이지 로드 실패 — URL: {page.url} / 스크린샷: {debug_dir}/login_failed.png")
+                        raise
 
-            # 디버그 스크린샷
-            page.screenshot(path=str(debug_dir / "login_page.png"))
+            if not logged_in_via_button:
+                self.logger.info(f"로그인 페이지 로드 완료: {page.url}")
+                page.screenshot(path=str(debug_dir / "login_page.png"))
 
-            # ── 사용자명 입력 ──────────────────────────────────────────────
-            # autocomplete 기반 → 타입 기반 순서로 시도 (name 속성은 자주 변경됨)
-            username_selectors = [
-                'input[autocomplete="username webauthn"]',  # 최신 UI
-                'input[autocomplete="username"]',           # 이전 UI
-                'input[type="text"]:visible',               # 타입 기반 fallback
-                'input:not([type="password"]):visible',     # password 아닌 첫 input
-            ]
-            username_input = wait_for_element(
-                page, username_selectors, timeout=10000, description="사용자명 입력 필드"
-            )
-            if not username_input:
-                raise LoginError("사용자명 입력 필드를 찾을 수 없습니다.")
-            if not safe_fill_input(username_input, username, description="사용자명"):
-                raise LoginError("사용자명 입력에 실패했습니다.")
-            page.wait_for_timeout(500)
+                # ── 사용자명 입력 ──────────────────────────────────────────────
+                # autocomplete 기반 → 타입 기반 순서로 시도 (name 속성은 자주 변경됨)
+                username_selectors = [
+                    'input[autocomplete="username webauthn"]',  # 최신 UI
+                    'input[autocomplete="username"]',           # 이전 UI
+                    'input[type="text"]:visible',               # 타입 기반 fallback
+                    'input:not([type="password"]):visible',     # password 아닌 첫 input
+                ]
+                username_input = wait_for_element(
+                    page, username_selectors, timeout=10000, description="사용자명 입력 필드"
+                )
+                if not username_input:
+                    raise LoginError("사용자명 입력 필드를 찾을 수 없습니다.")
+                if not safe_fill_input(username_input, username, description="사용자명"):
+                    raise LoginError("사용자명 입력에 실패했습니다.")
+                page.wait_for_timeout(500)
 
-            # ── 비밀번호 입력 ──────────────────────────────────────────────
-            # type="password" 는 UI 버전에 관계없이 불변
-            password_input = wait_for_element(
-                page,
-                ['input[type="password"]:visible', 'input[type="password"]'],
-                timeout=5000,
-                description="비밀번호 입력 필드",
-            )
-            if not password_input:
-                raise LoginError("비밀번호 입력 필드를 찾을 수 없습니다.")
-            if not safe_fill_input(password_input, password, description="비밀번호"):
-                raise LoginError("비밀번호 입력에 실패했습니다.")
-            page.wait_for_timeout(500)
+                # ── 비밀번호 입력 ──────────────────────────────────────────────
+                # type="password" 는 UI 버전에 관계없이 불변
+                password_input = wait_for_element(
+                    page,
+                    ['input[type="password"]:visible', 'input[type="password"]'],
+                    timeout=5000,
+                    description="비밀번호 입력 필드",
+                )
+                if not password_input:
+                    raise LoginError("비밀번호 입력 필드를 찾을 수 없습니다.")
+                if not safe_fill_input(password_input, password, description="비밀번호"):
+                    raise LoginError("비밀번호 입력에 실패했습니다.")
+                page.wait_for_timeout(500)
 
-            # ── Enter 키로 제출 ────────────────────────────────────────────
-            # 버튼 셀렉터는 UI 버전/언어마다 달라 불안정 → Enter 키로 대체
-            self.logger.info("Enter 키로 로그인 제출 중...")
-            page.keyboard.press("Enter")
+                # ── Enter 키로 제출 ────────────────────────────────────────────
+                # 버튼 셀렉터는 UI 버전/언어마다 달라 불안정 → Enter 키로 대체
+                self.logger.info("Enter 키로 로그인 제출 중...")
+                page.keyboard.press("Enter")
 
             # ── URL 변화 기반 로그인 성공 감지 (최대 30초) ─────────────────
             # 고정 sleep(20) 대신 실제 URL 변화를 기다림 → 빠르면 빠를수록 좋음

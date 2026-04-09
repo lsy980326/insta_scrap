@@ -17,6 +17,7 @@
    python track_views.py output/reels_data_20260101_143155.json output/reels_with_views.json
 """
 
+import fcntl
 import sys
 from pathlib import Path
 
@@ -61,6 +62,16 @@ def main() -> None:
 
     if not args.from_db and not args.input_file:
         parser.error("--from-db를 사용하거나 input_file을 지정하세요.")
+
+    # 중복 실행 방지 (동일 프로파일 추적이 이미 실행 중이면 즉시 종료)
+    lock_path = f"/tmp/track-views-{args.profile or 'default'}.lock"
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print(f"이미 추적 프로세스가 실행 중입니다 ({lock_path}). 종료합니다.")
+        lock_fd.close()
+        sys.exit(0)
 
     # 설정 로드 (프로파일 우선)
     config = load_profile(args.profile) if args.profile else load_config()
@@ -155,6 +166,9 @@ def main() -> None:
     except Exception as e:
         logger.error(f"오류 발생: {e}")
         raise
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 if __name__ == "__main__":
