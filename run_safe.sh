@@ -54,6 +54,13 @@ MAX_CREDIT_WAIT=7200      # 최대 2시간 대기 후 강제 시작
 CREDIT_WAITED=0
 STABLE_COUNT=0
 
+# force-start 플래그: 파일이 있으면 안정화 대기 건너뜀 (1회성)
+FORCE_START_FLAG="/tmp/insta-force-start-${PROFILE}"
+if [ -f "$FORCE_START_FLAG" ]; then
+    echo "$(date): force-start 플래그 감지 — 안정화 대기 건너뜀"
+    rm -f "$FORCE_START_FLAG"
+else
+
 echo "$(date): 버스트 크레딧 회복 대기 중 (steal<=${STEAL_START_THRESHOLD}% ${STABLE_REQUIRED}분 유지 필요)..."
 while true; do
     STEAL=$(check_steal)
@@ -82,6 +89,8 @@ while true; do
     sleep 60
     CREDIT_WAITED=$((CREDIT_WAITED + 62))  # check_steal 2초 포함
 done
+
+fi  # force-start 플래그 분기 종료
 
 # ── 수집 중 steal 모니터링 (백그라운드) ────────────────────────
 monitor_steal() {
