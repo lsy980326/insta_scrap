@@ -3,6 +3,15 @@
 PROFILE="${1:-kr}"
 LOCKFILE="/tmp/insta-scraper-${PROFILE}.lock"
 
+# ── Slack 알림 함수 ────────────────────────────────────────────
+SLACK_URL=$(grep '^SLACK_WEBHOOK_URL=' /srv/insta_scrap/.env 2>/dev/null | cut -d= -f2-)
+slack_notify() {
+    local MSG="$1"
+    [ -z "$SLACK_URL" ] && return
+    curl -s -X POST -H 'Content-type: application/json' \
+        --data "{\"text\":\"${MSG}\"}" "$SLACK_URL" > /dev/null 2>&1 || true
+}
+
 # ── NordVPN 연결 대기 (최대 90초) ──────────────────────────────
 MAX_VPN_WAIT=90
 VPN_WAITED=0
@@ -127,12 +136,25 @@ wait "$MONITOR_PID" 2>/dev/null
 # ── 종료 후 추가 휴식 (steal 높을수록 더 오래 쉼) ──────────────
 FINAL_STEAL=$(check_steal)
 EXTRA=$(extra_rest_seconds "$FINAL_STEAL")
+BASE_REST_MIN=40  # systemd RestartSec=2400
+
+_FLAG=""
+case "$PROFILE" in
+  kr) _FLAG="🇰🇷" ;;
+  jp) _FLAG="🇯🇵" ;;
+  us) _FLAG="🇺🇸" ;;
+  *)  _FLAG="[${PROFILE^^}]" ;;
+esac
+
 if [ "$EXTRA" -gt 0 ]; then
     EXTRA_MIN=$((EXTRA / 60))
+    TOTAL_MIN=$((BASE_REST_MIN + EXTRA_MIN))
     echo "$(date): 종료 시 steal ${FINAL_STEAL}% — 크레딧 회복을 위해 ${EXTRA_MIN}분 추가 휴식"
+    slack_notify "${_FLAG} *[${PROFILE^^}] 휴식 중*\n기본 ${BASE_REST_MIN}분 + steal ${FINAL_STEAL}% 추가 ${EXTRA_MIN}분 = 총 ${TOTAL_MIN}분 휴식"
     sleep "$EXTRA"
 else
     echo "$(date): 종료 시 steal ${FINAL_STEAL}% — 정상 종료, 추가 휴식 없음"
+    slack_notify "${_FLAG} *[${PROFILE^^}] 휴식 중*\n기본 ${BASE_REST_MIN}분 휴식 (steal ${FINAL_STEAL}% — 정상)"
 fi
 
 exit "$SCRAPER_EXIT"

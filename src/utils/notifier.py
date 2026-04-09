@@ -75,6 +75,13 @@ class SlackNotifier:
             f"{flag} *[{profile.upper()}] 디스크 사용률 경고*\n현재 사용률: {used_pct:.1f}% (임계값 70%)"
         )
 
+    def send_scrape_start(self, profile: str, run_minutes: int = 20) -> None:
+        flag = _flag(profile)
+        self._post(
+            f"{flag} *[{profile.upper()}] 수집 시작*\n"
+            f"예정 수집 시간: {run_minutes}분"
+        )
+
     def send_summary(self, profile: str, collect_count: int, duration_sec: int) -> None:
         flag = _flag(profile)
         mins = duration_sec // 60
@@ -83,6 +90,16 @@ class SlackNotifier:
             f"{flag} *[{profile.upper()}] 수집 완료*\n"
             f"수집 건수: {collect_count}건 | 소요 시간: {mins}분 {secs}초"
         )
+
+    def send_rest_start(self, profile: str, base_rest_min: int, extra_rest_min: int, steal_pct: int) -> None:
+        flag = _flag(profile)
+        total = base_rest_min + extra_rest_min
+        msg = f"{flag} *[{profile.upper()}] 휴식 중*\n기본 {base_rest_min}분"
+        if extra_rest_min > 0:
+            msg += f" + steal {steal_pct}% 추가 {extra_rest_min}분 = 총 {total}분 휴식"
+        else:
+            msg += f" 휴식 (steal {steal_pct}% — 정상)"
+        self._post(msg)
 
     def send_cpu_steal_warning(self, profile: str, steal_pct: float) -> None:
         flag = _flag(profile)

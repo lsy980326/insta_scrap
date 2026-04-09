@@ -111,6 +111,9 @@ def main() -> None:
             # 릴스 수집 시작
             logger.info("릴스 수집을 시작합니다...")
             logger.info("수집을 중단하려면 Ctrl+C를 누르세요.")
+            run_minutes = getattr(config, "scrape_run_minutes", 20) or 20
+            if notifier:
+                notifier.send_scrape_start(profile, run_minutes)
             scraper.start_collecting_reels()
 
             # 수집 완료 알림
