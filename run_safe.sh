@@ -12,15 +12,37 @@ slack_notify() {
         --data "{\"text\":\"${MSG}\"}" "$SLACK_URL" > /dev/null 2>&1 || true
 }
 
-# ── NordVPN 연결 대기 (최대 90초) ──────────────────────────────
-MAX_VPN_WAIT=90
+# ── NordVPN 연결 및 라우팅 확인 ────────────────────────────────
+# Status: Connected이어도 WireGuard(NORDLYNX) 라우팅 테이블이 깨질 수 있음
+# → ping으로 실제 연결 확인 후, 실패 시 disconnect && connect 로 라우팅 복구
+vpn_country() {
+    case "$1" in
+        kr) echo "south_korea" ;;
+        jp) echo "Japan" ;;
+        us) echo "united_states" ;;
+        *)  echo "" ;;
+    esac
+}
+VPN_COUNTRY=$(vpn_country "$PROFILE")
+
+MAX_VPN_WAIT=120
 VPN_WAITED=0
 echo "$(date): NordVPN 연결 상태 확인 중..."
-while ! nordvpn status 2>/dev/null | grep -q 'Status: Connected'; do
+while true; do
+    if nordvpn status 2>/dev/null | grep -q 'Status: Connected'; then
+        if ping -c 2 -W 3 8.8.8.8 > /dev/null 2>&1; then
+            echo "$(date): NordVPN 연결 및 라우팅 정상"
+            break
+        else
+            echo "$(date): NordVPN Status: Connected이나 라우팅 깨짐 — disconnect && reconnect"
+            nordvpn disconnect 2>/dev/null || true
+            sleep 3
+            nordvpn connect ${VPN_COUNTRY} 2>/dev/null || true
+            sleep 15
+        fi
+    fi
     if [ "$VPN_WAITED" -ge "$MAX_VPN_WAIT" ]; then
-        echo "$(date): NordVPN ${MAX_VPN_WAIT}초 후에도 미연결 — 재연결 시도"
-        nordvpn connect 2>/dev/null || true
-        sleep 15
+        echo "$(date): VPN 복구 ${MAX_VPN_WAIT}초 초과 — 강제 시작"
         break
     fi
     sleep 5
