@@ -30,7 +30,7 @@ profiles:
 
   jp:
     # ---- 계정 ----
-    instagram_username: 98inya@gmail.com
+    instagram_username: yamamoto980326@gmail.com
     instagram_password: 1q2w3e4r!!!
 
     # ---- 지역 설정 ----
@@ -49,8 +49,8 @@ profiles:
 
   us:
     # ---- 계정 (미국 인스타그램 계정 — TODO: 실계정 입력 필요) ----
-    instagram_username: YOUR_US_INSTAGRAM_ACCOUNT
-    instagram_password: YOUR_US_INSTAGRAM_PASSWORD
+    instagram_username: trendboardmvp007@gmail.com
+    instagram_password: trendboardmvp@1
 
     # ---- 지역 설정 ----
     locale: en-US

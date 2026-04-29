@@ -4,6 +4,8 @@ SQLAlchemy를 사용한 테이블 모델 정의
 """
 
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import (
     JSON,
     TIMESTAMP,
@@ -18,6 +20,12 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
+_KST = timezone(timedelta(hours=9))
+
+
+def _kst_now() -> datetime:
+    return datetime.now(_KST).replace(tzinfo=None)
 
 Base = declarative_base()
 
@@ -90,7 +98,7 @@ class ReelMetric(Base):
     likes = Column(Integer, nullable=True)
     comments = Column(Integer, nullable=True)
     views = Column(Integer, nullable=True)
-    recorded_at = Column(TIMESTAMP, default=func.current_timestamp(), nullable=False, index=True)
+    recorded_at = Column(TIMESTAMP, default=_kst_now, nullable=False, index=True)
 
     # 관계
     reel = relationship("Reel", back_populates="metrics")
