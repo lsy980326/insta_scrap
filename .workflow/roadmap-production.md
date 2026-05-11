@@ -7,6 +7,60 @@
 
 ---
 
+## 현재 상태 (최종 업데이트: 2026-05-11)
+
+> 이 섹션은 대화 시작 시 항상 확인 — 실제 서버/코드 상태 기준으로 갱신
+
+### 서버 운영 상태
+
+| 국가 | IP | 상태 | VPN | 비고 |
+|------|----|------|-----|------|
+| KR | `43.200.196.211` | ✅ 운영 중 | South Korea / Seoul | D9-A 스케줄 (09-13 + 15-21 KST) |
+| JP | `43.201.192.125` | ✅ 운영 중 | Japan / **Osaka** | VPN 오사카 고정 (run_safe.sh 수정), 신규 계정(yamamoto980326) |
+| US | `15.165.103.58` | ✅ 운영 중 (고정 IP) | United States / **Seattle** | git pull 불가(NordVPN 차단) → scp 배포 |
+
+> **⚠️ 2026-05-11 장애 복구**: JP/US 수집 중단
+> - JP: run_safe.sh vpn_country()가 `Japan`(도쿄)으로 매핑 → 도쿄 IP가 2FA 트리거 → 로그인 실패 루프. `Osaka`로 수정 후 복구
+> - US: 수집 중 NordVPN WireGuard 라우팅 깨짐 → `ERR_NAME_NOT_RESOLVED`로 크래시. 재부팅 후 복구
+> - 대응: run_safe.sh monitor_steal()에 수집 중 ping 체크 추가 — 라우팅 깨지면 자동 재연결 후 재시작
+>
+> **⚠️ 2026-04-10 장애 복구**: 3국 동시 수집 중단
+> - JP: `.env` git-crypt 암호화 상태로 배포됨 → scp 재배포로 복구
+> - KR/US: NordVPN WireGuard 라우팅 테이블 깨짐 → `disconnect && connect` 로 복구
+> - `.env` 변경 시 반드시 scp로 3개 서버 전부 배포할 것 (server-settings.md 배포 절차 참조)
+
+### 남은 TODO
+
+| 항목 | 상태 | 비고 |
+|------|------|------|
+| 고객사 DB 테이블 명세서 전달 | ⏳ 대기 | 로드맵 하단 SQL 스펙 참조 |
+
+### 완료된 주요 단계
+
+- ✅ D1~D6: DB 테이블명 변경, S3 아카이빙, 알림/헬스체크, KR 서버 전체 셋업
+- ✅ D7: JP 서버 셋업 (2026-03-20)
+- ✅ D8: US 서버 셋업 (2026-04-03, KR 스냅샷 기반)
+- ✅ D9: 버스트 크레딧 자동 관리 A/B/C/D (2026-03-31 ~ 2026-04-09)
+  - A: 운영시간 축소 (09-13 + 15-21 KST), 3서버 동일 적용
+  - B: run_safe.sh steal time 체크 (시작 전)
+  - C: Chrome 렌더러 제한
+  - D: 수집 중 steal 모니터링 + 종료 후 steal 수준별 추가 휴식 (5%=20분, 10%=30분, 20%=40분, 50%=60분)
+- ✅ session_manager.py 세션 검증 버그 수정 (accounts/edit 사용, 2026-04-03)
+- ✅ scraper.py 전체 로그인 전 쿠키 클리어 (만료 세션 간편로그인 화면 방지, 2026-04-09)
+- ✅ track_views.py flock 중복 실행 방지 (2026-04-09)
+- ✅ JP 신규 계정 적용 + 기존 JP 데이터 DB 초기화 (2026-04-08)
+- ✅ JP VPN 도쿄 → 오사카 변경 (2026-04-10, 도쿄 IP가 2FA 트리거 → 오사카 정상)
+- ✅ run_safe.sh: force-start 플래그 (`/tmp/insta-force-start-{profile}`) 추가 — 15분 steal 대기 1회 스킵 (2026-04-10)
+- ✅ run_safe.sh: Slack 알림 추가 — 수집 시작, 휴식 시작(steal 수준별) (2026-04-10)
+- ✅ notifier.py: send_scrape_start / send_rest_start / send_track_start / send_track_progress / send_track_summary(failed_count) 추가 (2026-04-10)
+- ✅ views_tracker.py: span.x1vvkbs 기반 조회수 추출로 전면 교체 (Instagram div._aaj_ 클래스 제거 대응, 2026-04-10)
+- ✅ views_tracker.py: 직접 URL 폴백 추가 (`/reels/{id}/`) — 크리에이터 페이지에 없는 오래된 릴스 대응 (2026-04-10)
+- ✅ views_tracker.py: 일본어/영어 숫자 파싱 추가 (万/億/K/M, JP·US 추적 0건 문제 해결) (2026-04-10)
+- ✅ views_tracker.py: track_from_db에 Slack 추적 진행 알림 연동 (2026-04-10)
+- ✅ models.py: ReelMetric.recorded_at KST 저장 수정 (`func.current_timestamp()` UTC → Python-side `_kst_now()`, KR/JP/US 전체 배포) (2026-04-10)
+
+---
+
 ## 고객사 요구사항 (확정)
 
 
@@ -798,57 +852,131 @@ Sentry → Slack `#트렌드보드-인스타-알림`: 신규 에러 이슈 발�
 
 ---
 
-### D7 (3/15~) — JP / US 서버 확장 ← **현재 단계**
+### D7 (3/15~3/20) — JP / US 서버 확장 ✅ JP 완료
 
-**전제 조건**: KR 서버 수집/추적 정상 확인 후 진행
+#### JP 서버 셋업 ✅ 완료 (2026-03-20)
 
-#### JP 서버 셋업
+- IP: `43.201.192.125` (고정)
+- KR 스냅샷 기반 생성 → NordVPN Japan 연결, autoconnect 설정
+- OOM + VPN 수정 완료 (2026-03-20)
+- systemd `insta-scraper@jp.service` active (running)
+- cron: 07:00 start / 23:00 stop / 00:00 DB 추적 / 매시간 헬스체크
+- `nordvpn-autoconnect.service`에 `User=ubuntu` + `Environment=HOME=/home/ubuntu` 추가
 
-```bash
-# 1. SSH 접속 (JP 서버 IP 확인 후)
-ssh -i ~/Downloads/insta_tiktok.pem ubuntu@{JP_SERVER_IP}
-
-# 2. 코드 배포
-git clone {repo_url} /srv/insta_scrap
-cd /srv/insta_scrap
-cp env.example .env   # .env 편집 (jp 계정, jp DB 설정)
-
-# 3. 의존성 설치
-poetry install --no-root
-poetry run playwright install chromium
-poetry run playwright install-deps chromium
-
-# 4. NordVPN japan 연결
-nordvpn set autoconnect on japan
-nordvpn connect japan
-
-# 5. run_safe.sh 생성 (KR과 동일)
-# (D6에서 만든 스크립트 그대로 복사)
-
-# 6. systemd 서비스 등록
-sudo cp scripts/insta-scraper@.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable insta-scraper@jp
-sudo systemctl start insta-scraper@jp
-
-# 7. cron 등록 (헬스체크)
-(crontab -l; echo "0 * * * * cd /srv/insta_scrap && poetry run python scripts/health_check.py --profile jp > /dev/null 2>&1") | crontab -
-```
-
-#### US 서버 셋업
+#### US 서버 셋업 ⏳ 계정 확보 후
 
 - `accounts.yaml` - `YOUR_US_INSTAGRAM_ACCOUNT` → 실계정 교체 필요
 - NordVPN: `nordvpn connect united_states`
 - 타임존: `America/New_York` (서버 및 브라우저 설정)
 - JP와 동일한 절차로 셋업
 
-#### 확인 체크리스트 (서버당)
+---
 
-- [ ] `sudo systemctl status insta-scraper@jp` — active (running)
-- [ ] `journalctl -u insta-scraper@jp -f` — 수집 로그 정상
-- [ ] Slack 수집 알림 수신
-- [ ] DB `instagram_reels` 에 `country_code='jp'` 데이터 적재 확인
-- [ ] `/tmp/insta-scraper-jp.lock` 파일 존재 확인 (flock 동작 중)
+### D8 (미정) — US 서버 셋업 ← **다음 단계**
+
+**전제 조건**: 미국 Instagram 계정 확보
+
+- `accounts.yaml` us 프로파일 계정 입력
+- KR 스냅샷 → US 리전 인스턴스 생성
+- NordVPN: `nordvpn connect united_states`
+- 타임존: `America/New_York`
+- JP와 동일한 절차로 셋업 (`.workflow/server-settings.md` 참조)
+
+---
+
+## D9 — 버스트 크레딧 자동 관리 ✅ 완료 (2026-03-31)
+
+**배경**: 2026-03-25, 2026-03-31 KR/JP 버스트 크레딧 소진 반복 → 수동 서비스 중지 필요
+**방향**: A → B → C 순서로 하나씩 작업 → 서버 테스트 → 커밋 반복
+
+### 배경 지식
+
+| 항목 | 내용 |
+|------|------|
+| 인스턴스 | Lightsail $24 (2 vCPU, 4GB RAM) |
+| 베이스라인 CPU | ~40% (이 이상 사용 시 크레딧 소모) |
+| 수집 중 평균 CPU | ~150% (2 vCPU 기준) → 크레딧 순소모 |
+| 크레딧 직접 조회 | 불가 (Lightsail IMDSv2 제한, CloudWatch 접근 없음) |
+| 크레딧 간접 측정 | **`/proc/stat` steal time** — 하이퍼바이저에 막힌 CPU 시간 = 크레딧 소진 지표 |
+| 현행 사이클 | 20분 수집 / 40분 휴식, 07:00~23:00 (16h) |
+
+**문제**: 16시간 운영 중 크레딧 회복이 소비를 못 따라잡아 장기 하향세
+
+---
+
+### D9-A — 운영 시간 축소 + 점심 강제 휴식 ✅ 완료 (2026-03-31)
+
+**작업 범위**: KR/JP 서버 cron 파일만 수정 (코드 변경 없음)
+
+```
+현재: 07:00 ──────────────────────── 23:00  (16h 운영, 야간 회복 8h)
+변경: 09:00 ── 13:00[2h 휴] ── 15:00 ── 21:00  (10h 운영, 야간 회복 12h)
+```
+
+변경 내용:
+- 시작 07:00 → 09:00 (야간 크레딧 회복 2h 추가)
+- 종료 23:00 → 21:00 (야간 크레딧 회복 2h 추가)
+- 13:00 ~ 15:00 점심 강제 휴식 추가 (2h 크레딧 회복)
+- 순 운영 시간: 16h → 10h (37.5% 감소)
+
+```cron
+# /etc/cron.d/insta-{국가} 변경안
+0 9  * * * ubuntu sudo systemctl start insta-scraper@{국가}.service
+0 13 * * * ubuntu sudo systemctl stop  insta-scraper@{국가}.service
+0 15 * * * ubuntu sudo systemctl start insta-scraper@{국가}.service
+0 21 * * * ubuntu sudo systemctl stop  insta-scraper@{국가}.service
+```
+
+---
+
+### D9-B — Steal time 기반 자동 대기 ✅ 완료 (2026-03-31)
+
+**작업 범위**: `run_safe.sh` 수정 (서버 직접 배포)
+
+매 사이클 시작 전 steal time을 측정하고, 크레딧 소진 상태면 자동 대기 후 재도전.
+
+```
+20분 수집 종료 → systemd 40분 대기 → run_safe.sh 실행
+                                           ↓
+                                     steal time 측정 (2초 샘플)
+                                   ┌── ≤5% → 수집 바로 시작
+                                   └── >5% → 60초 대기 후 재측정 (최대 1시간)
+```
+
+- steal > 5% = 크레딧 소진 상태, 최대 1시간 대기 후 강제 시작
+- `server-settings.md`의 `run_safe.sh` 참조
+
+---
+
+### D9-C — Chrome 렌더러 제한으로 CPU 소모 감소 ✅ 완료 (2026-03-31)
+
+**작업 범위**: `src/browser.py` + `.env`
+
+```python
+# src/browser.py — 추가된 플래그
+"--renderer-process-limit=1",            # 렌더러 프로세스 1개로 제한
+"--js-flags=--max-old-space-size=512",   # V8 힙 512MB 상한
+```
+
+```env
+REQUEST_DELAY=3.0   # 기존 2.0 → 3.0초
+```
+
+---
+
+### D9 진행 결과
+
+| 순서 | 작업 | 상태 | 비고 |
+|------|------|------|------|
+| D9-A | cron 운영 시간 축소 | ✅ 완료 | KR/JP 서버 cron 업데이트 완료 |
+| D9-B | run_safe.sh steal 체크 | ✅ 완료 | KR/JP run_safe.sh 업데이트 완료 |
+| D9-C | Chrome 렌더러 제한 | ✅ 완료 | browser.py + config.py 수정, 서버 배포 완료 |
+
+### 현황 (2026-03-31)
+
+- KR/JP 서버 모두 D9-A/B/C 적용 완료 + git pull 배포 완료
+- 2026-03-31 하루 수집 중단: 버스트 크레딧 풀 회복 목적으로 cron start 라인 주석 처리
+- **재개 시**: 각 서버 cron 파일 start 라인 주석 해제 필요
 
 ---
 
@@ -950,7 +1078,7 @@ LIMIT 50;
 | 고객사 DB 기존 데이터 확인 (테이블명 충돌 여부) | 담당자     | ✅ 완료 |
 | 고객사 DB 테이블 구조 명세서 전달          | 담당자     | ⏳ 대기 |
 | **KR Lightsail 고정 IP 할당**     | 담당자     | ✅ 완료 (43.200.196.211) |
-| **JP 서버 셋업**                  | 담당자     | ⏳ D7  |
+| **JP 서버 셋업**                  | 담당자     | ✅ 완료 (43.201.192.125, 2026-03-20) |
 | US 서버 셋업                      | 담당자     | ⏳ 계정 확보 후 |
 
 
@@ -968,5 +1096,6 @@ LIMIT 50;
 | Instagram 로그인 세션 만료   | 저   | SessionManager 구현됨, 자동 재로그인 동작 확인         |
 | S3 업로드 실패             | 저   | 원본 CDN URL fallback (수집 중단 없음)            |
 | **디스크 용량 초과 (로그 폭발)** | **중** | **logrotate + rotation="50 MB" + health_check 디스크 모니터링 (D4.5)** |
+| **버스트 크레딧 지속 하향** | **중** | **D9 완료 (운영시간 축소 + steal 자동대기 + Chrome 제한) — 모니터링 중** |
 
 

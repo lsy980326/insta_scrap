@@ -6,7 +6,7 @@ PROFILE="${1:-kr}"
 vpn_country() {
     case "$1" in
         kr) echo "south_korea" ;;
-        jp) echo "Japan" ;;
+        jp) echo "Osaka" ;;
         us) echo "united_states" ;;
         *)  echo "" ;;
     esac

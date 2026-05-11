@@ -4,8 +4,40 @@
 
 ## 현재 사이클
 
-### 사이클 시작일: 2026-03-12
+### 사이클 시작일: 2026-05-11
 ### 사이클 완료일: (진행 중)
+
+### 작업 내용 — JP/US 장애 복구 + VPN 라우팅 깨짐 자동 방지
+
+- ✅ **JP VPN 오사카 고정**: run_safe.sh vpn_country() jp→Japan(도쿄) 에서 Osaka로 수정. 도쿄 IP 2FA 트리거 방지
+- ✅ **수집 중 VPN 라우팅 깨짐 자동 복구**: monitor_steal()에 ping 체크 추가 (2회 연속 실패 시 scraper kill + reconnect)
+- ✅ **3서버 run_safe.sh scp 배포**: KR/JP/US 모두 동일 수정본 적용
+- ✅ **US 서버 재부팅 후 서비스 복구**: 인스턴스 재부팅 후 insta-scraper@us 정상 기동 확인
+
+### 진행 단계
+
+- [x] JP VPN 도시 Osaka 고정 (run_safe.sh)
+- [x] monitor_steal() VPN ping 체크 추가
+- [x] 3서버 배포 + JP 서비스 재시작
+- [x] US 서비스 기동 확인
+
+---
+
+## 이전 사이클 (2026-04-03)
+
+### 작업 내용 — D8 US 서버 셋업 + 버스트 크레딧 동적 관리
+
+- ✅ **US 서버 셋업 (D8)**: 15.165.103.58, KR 스냅샷 기반, NordVPN united_states, D9-A 스케줄 적용
+- ✅ **accounts.yaml 계정 업데이트**: JP(trendboardmvp006@gmail.com), US(trendboardmvp007@gmail.com) 최종 확정
+- ✅ **session_manager.py 세션 검증 버그 수정**: accounts/edit URL 사용 (프로필 페이지 오판 제거)
+- ✅ **US D9-A 스케줄 적용**: 09-13 + 15-21 KST (버스트 크레딧 회복 중)
+- ✅ **JP 서비스 중지**: 문제 있음, cron 전부 주석처리
+- ✅ **D9-D: run_safe.sh 동적 steal 모니터링**: steal<=1% 15분 유지 시 시작, 수집 중 >8% 자동 kill (2026-04-06)
+
+---
+
+## 이전 사이클 (2026-03-12)
+### 사이클 완료일: 2026-04-03
 
 ### 작업 내용 — D3~D6 KR 서버 풀 셋업
 
@@ -43,12 +75,12 @@
 - [x] 7단계: Sentry + GPU 최적화 + burst credit 회복 사이클
 - [x] 8단계: 추적 모듈 DB 기반 전환 (track_from_db, --from-db, 이미지 차단, 배치 휴식, 시간대 분리 cron)
 - [x] 9단계: KR 운영 안정화 완료 (collected_at KST, Slack/CDN DNS 재시도, Cron 정리, CPU Steal 모니터링)
-- [ ] 10단계: JP 서버 셋업
+- [x] 10단계: JP 서버 셋업 (2026-03-20 완료, 43.201.192.125)
 
 - ✅ **KR 서버 재시작 복구 (D6.12)**: IP 변경(3.38.183.221 → 43.201.149.219), 수집 서비스 자동 재개 확인
 
 ### 완료 상태
-진행 중 — KR 재가동 확인, JP 서버 셋업 대기 / KR 고정 IP 할당 필요
+진행 중 — KR/JP 운영 중, US 서버 셋업 대기 (미국 Instagram 계정 미확보)
 
 ---
 
