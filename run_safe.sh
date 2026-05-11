@@ -18,7 +18,7 @@ slack_notify() {
 vpn_country() {
     case "$1" in
         kr) echo "south_korea" ;;
-        jp) echo "Japan" ;;
+        jp) echo "Osaka" ;;
         us) echo "united_states" ;;
         *)  echo "" ;;
     esac
@@ -126,6 +126,7 @@ fi  # force-start 플래그 분기 종료
 # ── 수집 중 steal 모니터링 (백그라운드) ────────────────────────
 monitor_steal() {
     local PID=$1
+    local VPN_FAIL=0
     echo "$(date): steal 모니터 시작 (PID=${PID}, 중지 기준 ${STEAL_STOP_THRESHOLD}%)"
     while kill -0 "$PID" 2>/dev/null; do
         STEAL=$(check_steal)
@@ -134,7 +135,23 @@ monitor_steal() {
             kill "$PID" 2>/dev/null
             break
         fi
-        echo "$(date): steal 모니터: ${STEAL}% (정상)"
+        # 수집 중 VPN 라우팅 깨짐 감지 (ping 2회 연속 실패 시 scraper 종료 후 재연결)
+        if ! ping -c 1 -W 3 8.8.8.8 > /dev/null 2>&1; then
+            VPN_FAIL=$((VPN_FAIL + 1))
+            echo "$(date): steal 모니터: VPN 라우팅 실패 ${VPN_FAIL}/2"
+            if [ "$VPN_FAIL" -ge 2 ]; then
+                echo "$(date): VPN 라우팅 깨짐 확정 — scraper 종료 후 재연결"
+                slack_notify "${_FLAG} ⚠️ *[${PROFILE^^}] VPN 라우팅 깨짐* — scraper 종료 후 재연결 시도"
+                kill "$PID" 2>/dev/null
+                nordvpn disconnect 2>/dev/null || true
+                sleep 3
+                nordvpn connect ${VPN_COUNTRY} 2>/dev/null || true
+                break
+            fi
+        else
+            VPN_FAIL=0
+            echo "$(date): steal 모니터: ${STEAL}% (정상)"
+        fi
         sleep 60
     done
     echo "$(date): steal 모니터 종료"
