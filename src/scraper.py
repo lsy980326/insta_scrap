@@ -2101,6 +2101,7 @@ class InstagramReelsScraper:
             self._wait_for_reels_page_load(page)
 
             collected_reels: list[ReelData] = []
+            self.collected_reels = collected_reels  # 외부에서 수집 건수 조회 가능하도록
             collected_reel_ids: set[str] = set()  # 중복 체크용 (URL 기반 ID)
             collected_thumbnails: set[str] = set()  # 썸네일 중복 체크용
             save_interval = 10  # 10개마다 저장
@@ -2110,6 +2111,8 @@ class InstagramReelsScraper:
             consecutive_duplicates = 0  # 연속 중복 감지 횟수
             max_consecutive_duplicates = 10  # 연속 중복 N개 이상이면 피드 루프로 판단, 종료
             last_poster: str | None = None  # 릴스 전환 감지용 (DOM/카운트 갱신 안정화)
+            relogin_count = 0  # 수집 중 재로그인 횟수 (무한 루프 차단용)
+            MAX_RELOGIN = 3
 
             # 실행 시간 제한 (burst credit 회복용)
             run_deadline: float | None = None
@@ -2123,10 +2126,39 @@ class InstagramReelsScraper:
                     self.logger.info(f"⏱️ 수집 시간 {self.config.scrape_run_minutes}분 경과 — 정상 종료 (크레딧 회복 대기 중)")
                     break
                 try:
-                    # 수집 중 로그인 리다이렉트 감지 — 세션 만료 시 재로그인 후 릴스 탭으로 복귀
+                    # 수집 중 URL 감지 — 챌린지/체크포인트/로그인 리다이렉트 처리
                     current_url = page.evaluate("window.location.href")
+
+                    # [수집-5] 챌린지·체크포인트 페이지 감지 → 24시간 락 후 정상 종료
+                    _CHALLENGE_PATTERNS = (
+                        "/challenge/", "/checkpoint/", "/auth_platform/", "/accounts/suspended/"
+                    )
+                    if any(p in current_url for p in _CHALLENGE_PATTERNS):
+                        self.logger.error(f"계정 보안 페이지 감지 — 24시간 휴식 시작: {current_url}")
+                        import pathlib
+                        _profile = getattr(self.config, "profile", "unknown")
+                        pathlib.Path(f"/tmp/insta-account-locked-{_profile}").touch()
+                        try:
+                            from .utils.notifier import get_notifier
+                            _n = get_notifier(self.config)
+                            if _n:
+                                _n.send_login_error(_profile, f"보안 페이지 감지: {current_url}")
+                        except Exception:
+                            pass
+                        break
+
+                    # [수집-6] 로그인 리다이렉트 감지 — 재로그인 횟수 제한(3회)
                     if "accounts/login" in current_url or "/login" in current_url:
-                        self.logger.warning(f"수집 중 로그인 페이지 감지 — 세션 만료, 재로그인 시도: {current_url}")
+                        relogin_count += 1
+                        if relogin_count > MAX_RELOGIN:
+                            self.logger.error(
+                                f"수집 중 재로그인 {MAX_RELOGIN}회 초과 — 정상 종료 (다음 사이클에서 재시도)"
+                            )
+                            break
+                        self.logger.warning(
+                            f"수집 중 로그인 페이지 감지 — 재로그인 시도 "
+                            f"({relogin_count}/{MAX_RELOGIN}): {current_url}"
+                        )
                         self._is_logged_in = False
                         self.login()
                         consecutive_failures = 0

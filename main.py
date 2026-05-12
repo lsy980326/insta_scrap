@@ -91,6 +91,7 @@ def main() -> None:
     import time
     start_time = time.time()
 
+    scraper = None
     try:
         # 스크래퍼 인스턴스 생성
         scraper = InstagramReelsScraper(config=config)
@@ -98,14 +99,28 @@ def main() -> None:
         # 로그인 정보가 있으면 자동 로그인 및 릴스 탭 이동
         if config.instagram_username and config.instagram_password:
             logger.info("로그인 정보가 설정되어 있습니다. 로그인을 시도합니다...")
-            try:
-                scraper.login()
-            except Exception as e:
-                logger.error(f"로그인 실패: {e}")
-                capture_exception(e, event="login_failed")
-                if notifier:
-                    notifier.send_login_error(profile, str(e))
-                raise
+
+            # 지수 백오프 재시도 (5분 → 15분 → 30분)
+            _retry_waits = [300, 900, 1800]
+            for _attempt in range(len(_retry_waits) + 1):
+                try:
+                    scraper.login()
+                    break
+                except Exception as e:
+                    capture_exception(e, event=f"login_failed_attempt_{_attempt + 1}")
+                    if _attempt < len(_retry_waits):
+                        _wait = _retry_waits[_attempt]
+                        logger.warning(
+                            f"로그인 실패 ({_attempt + 1}/{len(_retry_waits) + 1}) — "
+                            f"{_wait // 60}분 후 재시도: {e}"
+                        )
+                        time.sleep(_wait)
+                    else:
+                        logger.error(f"로그인 {len(_retry_waits) + 1}회 모두 실패: {e}")
+                        if notifier:
+                            notifier.send_login_error(profile, str(e))
+                        raise
+
             logger.info("로그인 성공! 릴스 탭까지 이동 완료.")
 
             # 릴스 수집 시작
@@ -118,7 +133,7 @@ def main() -> None:
 
             # 수집 완료 알림
             duration = int(time.time() - start_time)
-            collect_count = len(scraper.collected_reels) if hasattr(scraper, "collected_reels") else 0
+            collect_count = len(getattr(scraper, "collected_reels", []))
             if notifier:
                 if collect_count == 0:
                     notifier.send_zero_collect(profile)
@@ -137,9 +152,12 @@ def main() -> None:
             notifier._post(f"❌ *[{profile.upper()}] 수집 오류*\n```{str(e)[:300]}```")
         raise
     finally:
-        # 브라우저를 열어둔 채로 종료 (수동으로 닫을 수 있도록)
-        logger.info("프로그램이 종료되었습니다. 브라우저는 열려 있습니다.")
-        logger.info("브라우저를 닫으려면 브라우저를 직접 닫으세요.")
+        logger.info("수집 종료. 브라우저 정리 중...")
+        if scraper and scraper.browser_manager:
+            try:
+                scraper.browser_manager.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

@@ -50,6 +50,20 @@ while true; do
 done
 echo "$(date): NordVPN 상태: $(nordvpn status 2>/dev/null | grep Status || echo 'unknown')"
 
+# ── 계정 락 플래그 확인 (챌린지/체크포인트 감지 시 24시간 휴식) ──
+LOCK_FLAG="/tmp/insta-account-locked-${PROFILE}"
+if [ -f "$LOCK_FLAG" ]; then
+    LOCK_AGE=$(($(date +%s) - $(stat -c %Y "$LOCK_FLAG")))
+    if [ "$LOCK_AGE" -lt 86400 ]; then
+        REMAIN_MIN=$(( (86400 - LOCK_AGE) / 60 ))
+        echo "$(date): 계정 락 플래그 활성 (${LOCK_AGE}초 경과, 남은 ${REMAIN_MIN}분) — 종료"
+        slack_notify "${_FLAG} *[${PROFILE^^}] 계정 락 휴식 중* — 남은 ${REMAIN_MIN}분 후 자동 재개"
+        exit 0
+    fi
+    echo "$(date): 계정 락 플래그 24시간 경과 — 해제 후 재개"
+    rm -f "$LOCK_FLAG"
+fi
+
 # ── CPU 버스트 크레딧 확인 (steal time 기반) ───────────────────
 check_steal() {
     read -r cpu u n s id io irq si st _ < /proc/stat; sleep 2
@@ -143,6 +157,7 @@ monitor_steal() {
                 echo "$(date): VPN 라우팅 깨짐 확정 — scraper 종료 후 재연결"
                 slack_notify "${_FLAG} ⚠️ *[${PROFILE^^}] VPN 라우팅 깨짐* — scraper 종료 후 재연결 시도"
                 kill "$PID" 2>/dev/null
+                touch "/tmp/insta-vpn-killed-${PROFILE}"
                 nordvpn disconnect 2>/dev/null || true
                 sleep 3
                 nordvpn connect ${VPN_COUNTRY} 2>/dev/null || true
@@ -158,7 +173,7 @@ monitor_steal() {
 }
 
 # flock으로 중복 실행 방지 후 scraper 실행
-flock -n "$LOCKFILE" /home/ubuntu/.local/bin/poetry run python main.py --profile "$PROFILE" &
+flock -n "$LOCKFILE" timeout 1500 /home/ubuntu/.local/bin/poetry run python main.py --profile "$PROFILE" &
 SCRAPER_PID=$!
 
 monitor_steal "$SCRAPER_PID" &
