@@ -1,4 +1,5 @@
 import json
+import random
 import re
 import time
 from pathlib import Path
@@ -15,7 +16,7 @@ from .exceptions import (
     ScrapingError,
 )
 from .models import ReelData
-from .utils.human_behavior import random_delay, random_mouse_movement, simulate_page_interaction
+from .utils.human_behavior import random_delay, random_mouse_movement, simulate_page_interaction, weighted_delay
 from .utils.logger import get_logger
 from .utils.session_manager import SessionManager
 from .utils.wait_utils import safe_fill_input, wait_for_element
@@ -281,8 +282,22 @@ class InstagramReelsScraper:
                 )
                 if not username_input:
                     raise LoginError("사용자명 입력 필드를 찾을 수 없습니다.")
-                if not safe_fill_input(username_input, username, description="사용자명"):
-                    raise LoginError("사용자명 입력에 실패했습니다.")
+
+                # simulate_typing 시도 → 값 불일치 or 실패 시 safe_fill_input fallback
+                def _type_field(locator, text: str, delay_ms: float = 100) -> bool:
+                    try:
+                        locator.click()
+                        time.sleep(random.uniform(0.2, 0.5))
+                        for char in text:
+                            locator.type(char, delay=int(delay_ms + random.uniform(-20, 30)))
+                            time.sleep(random.uniform(0.02, 0.07))
+                        return locator.input_value() == text
+                    except Exception:
+                        return False
+
+                if not _type_field(username_input, username):
+                    if not safe_fill_input(username_input, username, description="사용자명"):
+                        raise LoginError("사용자명 입력에 실패했습니다.")
                 page.wait_for_timeout(500)
 
                 # ── 비밀번호 입력 ──────────────────────────────────────────────
@@ -295,8 +310,10 @@ class InstagramReelsScraper:
                 )
                 if not password_input:
                     raise LoginError("비밀번호 입력 필드를 찾을 수 없습니다.")
-                if not safe_fill_input(password_input, password, description="비밀번호"):
-                    raise LoginError("비밀번호 입력에 실패했습니다.")
+                # 비밀번호는 타이핑 딜레이 더 불규칙하게
+                if not _type_field(password_input, password, delay_ms=random.uniform(80, 150)):
+                    if not safe_fill_input(password_input, password, description="비밀번호"):
+                        raise LoginError("비밀번호 입력에 실패했습니다.")
                 page.wait_for_timeout(500)
 
                 # ── Enter 키로 제출 ────────────────────────────────────────────
@@ -1762,6 +1779,12 @@ class InstagramReelsScraper:
             if not ("graphql" in url or "/api/v1/feed/" in url or "/api/v1/media/" in url or "/info/" in url or "web_info" in url):
                 return
 
+            # HTTP 429 감지 → 플래그 세팅 (메인 루프에서 종료 처리)
+            if response.status == 429:
+                self.logger.warning(f"⚠️ HTTP 429 Rate Limit 감지: {url}")
+                self._rate_limit_detected = True
+                return
+
             try:
                 json_body = response.json()
 
@@ -2113,17 +2136,28 @@ class InstagramReelsScraper:
             last_poster: str | None = None  # 릴스 전환 감지용 (DOM/카운트 갱신 안정화)
             relogin_count = 0  # 수집 중 재로그인 횟수 (무한 루프 차단용)
             MAX_RELOGIN = 3
+            next_rest_at = random.randint(15, 30)  # 장휴식 트리거 기준 (이 개수 수집 후 60~180초 휴식)
+            self._rate_limit_detected = False
 
-            # 실행 시간 제한 (burst credit 회복용)
+            # 실행 시간 제한 (burst credit 회복용, ±3분 랜덤화로 규칙적 패턴 분산)
             run_deadline: float | None = None
             if self.config.scrape_run_minutes:
-                run_deadline = time.time() + self.config.scrape_run_minutes * 60
-                self.logger.info(f"⏱️ 수집 시간 제한: {self.config.scrape_run_minutes}분 후 종료 (burst credit 회복)")
+                run_minutes = self.config.scrape_run_minutes + random.randint(-3, 3)
+                run_deadline = time.time() + run_minutes * 60
+                self.logger.info(f"⏱️ 수집 시간 제한: {run_minutes}분 후 종료 (기본 {self.config.scrape_run_minutes}분 ±3)")
 
             while True:
                 # 실행 시간 초과 시 정상 종료 (systemd가 RestartSec 대기 후 재시작)
                 if run_deadline and time.time() > run_deadline:
-                    self.logger.info(f"⏱️ 수집 시간 {self.config.scrape_run_minutes}분 경과 — 정상 종료 (크레딧 회복 대기 중)")
+                    self.logger.info(f"⏱️ 수집 시간 {run_minutes}분 경과 — 정상 종료 (크레딧 회복 대기 중)")
+                    break
+                # max_reels 상한 도달 시 종료 (시간 제한과 먼저 도달하는 쪽)
+                if self.config.max_reels and len(collected_reels) >= self.config.max_reels:
+                    self.logger.info(f"✅ max_reels({self.config.max_reels}개) 도달 — 정상 종료")
+                    break
+                # Rate Limit 감지 시 즉시 종료 (다음 사이클까지 자연 휴식)
+                if self._rate_limit_detected:
+                    self.logger.warning("⚠️ Rate Limit 감지로 수집 중단 — 다음 사이클까지 휴식")
                     break
                 try:
                     # 수집 중 URL 감지 — 챌린지/체크포인트/로그인 리다이렉트 처리
@@ -2288,9 +2322,16 @@ class InstagramReelsScraper:
                         time.sleep(1)  # 대기 시간 최적화
                     else:
                         consecutive_failures = 0  # 이동 성공 시 실패 카운터 리셋
-                        # 이동 성공 후 추가 안정화 대기
-                        time.sleep(0.5)  # 대기 시간 최적화
-                        random_delay(0.3, 0.5)  # 대기 시간 최적화
+                        # 봇 감지 회피: 사람처럼 릴스를 보는 행동 시뮬레이션
+                        random_mouse_movement(page, duration=random.uniform(0.2, 0.5))
+                        weighted_delay()
+                        # 장휴식: 15~30개마다 60~180초 (>= 로 중복 스킵 방어)
+                        if len(collected_reels) >= next_rest_at:
+                            self.logger.info(f"💤 장휴식 시작 ({len(collected_reels)}개 수집 후)")
+                            time.sleep(random.uniform(60, 180))
+                            next_rest_at = len(collected_reels) + random.randint(15, 30)
+                        if random.random() < 0.3:
+                            simulate_page_interaction(page, min_actions=1, max_actions=2)
 
                 except KeyboardInterrupt:
                     self.logger.info("사용자에 의해 중단되었습니다.")

@@ -225,15 +225,7 @@ class BrowserManager:
                     }
                 });
 
-                // Languages 설정 (로케일별 override는 별도 스크립트에서 처리)
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['ko-KR', 'ko', 'en-US', 'en']
-                });
-
-                // Platform 설정
-                Object.defineProperty(navigator, 'platform', {
-                    get: () => 'Win32'
-                });
+                // languages / platform — UA 기반으로 별도 init script에서 주입 (아래 참조)
 
                 // Hardware concurrency 설정
                 Object.defineProperty(navigator, 'hardwareConcurrency', {
@@ -338,6 +330,12 @@ class BrowserManager:
                 f"Object.defineProperty(navigator, 'languages', {{ get: () => {nav_languages_js} }});"
             )
 
+            # navigator.platform — UA에 맞춰 동적 설정 (UA 풀 도입 후에도 자동 일치)
+            nav_platform = "MacIntel" if "Macintosh" in user_agent else "Win32"
+            self.page.add_init_script(
+                f"Object.defineProperty(navigator, 'platform', {{ get: () => '{nav_platform}' }});"
+            )
+
             self.logger.info(
                 f"브라우저 시작 완료: {self.config.playwright_browser} "
                 f"(locale={locale}, timezone={self.config.browser_timezone})"
@@ -380,16 +378,10 @@ class BrowserManager:
 
     def _get_default_user_agent(self) -> str:
         """
-        기본 User-Agent 반환
-
-        Returns:
-            User-Agent 문자열
+        User-Agent 풀에서 랜덤 선택 (신규 로그인 시에만 호출, 세션 재사용 시 saved_user_agent 우선)
         """
-        return (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
-        )
+        from .utils.user_agent_pool import get_random_ua
+        return get_random_ua()
 
     def get_user_agent(self) -> str:
         """

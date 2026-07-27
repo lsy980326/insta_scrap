@@ -89,21 +89,35 @@ def human_like_click(locator: Locator, delay_before: float = 0.3, delay_after: f
 
 def random_mouse_movement(page: Page, duration: float = 0.5) -> None:
     """
-    랜덤 마우스 움직임 시뮬레이션
-
-    Args:
-        page: Playwright Page 객체
-        duration: 움직임 지속 시간 (초)
+    베지어 곡선 기반 자연스러운 마우스 이동
     """
     try:
-        # 랜덤 위치로 마우스 이동
         viewport = page.viewport_size
-        if viewport:
-            x = random.randint(100, viewport["width"] - 100)
-            y = random.randint(100, viewport["height"] - 100)
+        if not viewport:
+            return
+
+        current = page.evaluate("() => ({x: window._mouseX || 640, y: window._mouseY || 400})")
+        start_x, start_y = current["x"], current["y"]
+        end_x = random.randint(100, viewport["width"] - 100)
+        end_y = random.randint(100, viewport["height"] - 100)
+
+        # 베지어 곡선 제어점 (자연스러운 커브)
+        cp1_x = start_x + (end_x - start_x) * random.uniform(0.2, 0.5) + random.randint(-80, 80)
+        cp1_y = start_y + (end_y - start_y) * random.uniform(0.2, 0.5) + random.randint(-80, 80)
+        cp2_x = start_x + (end_x - start_x) * random.uniform(0.5, 0.8) + random.randint(-40, 40)
+        cp2_y = start_y + (end_y - start_y) * random.uniform(0.5, 0.8) + random.randint(-40, 40)
+
+        steps = random.randint(15, 30)
+        for i in range(1, steps + 1):
+            t = i / steps
+            inv = 1 - t
+            x = inv**3 * start_x + 3 * inv**2 * t * cp1_x + 3 * inv * t**2 * cp2_x + t**3 * end_x
+            y = inv**3 * start_y + 3 * inv**2 * t * cp1_y + 3 * inv * t**2 * cp2_y + t**3 * end_y
             page.mouse.move(x, y)
-            random_delay(duration * 0.5, duration * 1.5)
-            logger.debug(f"마우스 이동: ({x}, {y})")
+            time.sleep(duration / steps + random.uniform(0, 0.01))
+
+        page.evaluate(f"() => {{ window._mouseX = {end_x}; window._mouseY = {end_y}; }}")
+        logger.debug(f"마우스 이동: ({start_x},{start_y}) → ({end_x},{end_y})")
     except Exception as e:
         logger.debug(f"마우스 이동 중 오류 (무시): {e}")
 
@@ -132,6 +146,21 @@ def simulate_typing(page: Page, selector: str, text: str, typing_delay: float = 
     except Exception as e:
         logger.warning(f"타이핑 중 오류: {e}")
         raise
+
+
+def weighted_delay() -> None:
+    """
+    가중치 분포 딜레이 (실제 사람의 시청 패턴 모방)
+    70% 빠른 스크롤(3~8s), 20% 시청(8~20s), 10% 몰입(20~45s)
+    """
+    r = random.random()
+    if r < 0.70:
+        delay = random.uniform(3.0, 8.0)
+    elif r < 0.90:
+        delay = random.uniform(8.0, 20.0)
+    else:
+        delay = random.uniform(20.0, 45.0)
+    time.sleep(delay)
 
 
 def simulate_page_interaction(page: Page, min_actions: int = 1, max_actions: int = 3) -> None:

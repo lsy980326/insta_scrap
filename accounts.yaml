@@ -6,6 +6,11 @@
 #   poetry run python main.py --profile jp
 #   poetry run python main.py --profile us
 #   poetry run python main.py --list-profiles
+# 한국
+#   PLAYWRIGHT_HEADLESS=false poetry run python main.py --profile kr
+
+# 미국
+#   PLAYWRIGHT_HEADLESS=false poetry run python main.py --profile us
 
 profiles:
 
@@ -50,7 +55,7 @@ profiles:
   us:
     # ---- 계정 (미국 인스타그램 계정 — TODO: 실계정 입력 필요) ----
     instagram_username: trendboardmvp007@gmail.com
-    instagram_password: trendboardmvp@1
+    instagram_password: trendboardmvp@1#
 
     # ---- 지역 설정 ----
     locale: en-US
